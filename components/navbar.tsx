@@ -17,6 +17,11 @@ export async function Navbar() {
           {user ? (
             <>
               <Button asChild variant="ghost">
+                <Link href="/upload" prefetch={false}>
+                  Upload
+                </Link>
+              </Button>
+              <Button asChild variant="ghost">
                 <Link href="/profile" prefetch={false}>
                   Profile
                 </Link>

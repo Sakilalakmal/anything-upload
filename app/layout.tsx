@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
 
 import { Navbar } from "@/components/navbar"
+import { Toaster } from "@/components/ui/sonner"
 
 import "./globals.css"
 
@@ -32,6 +33,7 @@ export default function RootLayout({
           <Navbar />
           <main className="mx-auto w-full max-w-5xl px-4 py-10">{children}</main>
         </div>
+        <Toaster richColors closeButton position="top-right" />
       </body>
     </html>
   )
