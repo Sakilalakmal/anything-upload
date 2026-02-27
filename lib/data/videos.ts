@@ -124,14 +124,15 @@ export async function getVideoById(videoId: string, viewerId?: string | null) {
     return null
   }
 
+  const isOwner = Boolean(viewerId && video.userId === viewerId)
   const canView =
     video.visibility === VideoVisibility.PUBLIC ||
     video.visibility === VideoVisibility.UNLISTED ||
-    (viewerId ? video.userId === viewerId : false)
+    isOwner
 
-  if (!canView) {
-    return null
+  return {
+    ...video,
+    canView,
+    isOwner,
   }
-
-  return video
 }

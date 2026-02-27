@@ -141,10 +141,10 @@ export default async function ProfilePage() {
                         <Clapperboard className="size-5" />
                       </EmptyMedia>
                       <EmptyTitle>No videos yet</EmptyTitle>
-                      <EmptyDescription>Your uploads will show here once Phase 3 video upload is added.</EmptyDescription>
+                      <EmptyDescription>Your uploads will appear here after you publish your first video.</EmptyDescription>
                     </EmptyHeader>
                     <Button asChild className="transition-transform hover:-translate-y-0.5">
-                      <Link href="/upload">Go to upload placeholder</Link>
+                      <Link href="/upload">Upload your first video</Link>
                     </Button>
                   </Empty>
                 )}
