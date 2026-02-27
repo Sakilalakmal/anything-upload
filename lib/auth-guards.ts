@@ -27,3 +27,13 @@ export async function requireUser() {
 
   return session.user as AuthUser
 }
+
+export async function requireUserOrThrow(message = "You must be signed in.") {
+  const session = await getCurrentSession()
+
+  if (!session?.user) {
+    throw new Error(message)
+  }
+
+  return session.user as AuthUser
+}

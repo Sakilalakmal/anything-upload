@@ -95,7 +95,7 @@ export default async function ProfilePage() {
         <Card className="border-border/60">
           <CardHeader className="pb-3">
             <CardTitle>Content</CardTitle>
-            <CardDescription>Manage videos and audience activity.</CardDescription>
+            <CardDescription>Manage videos and monitor live social activity.</CardDescription>
           </CardHeader>
           <CardContent>
             <Tabs defaultValue="videos" className="w-full">
@@ -156,9 +156,9 @@ export default async function ProfilePage() {
                     <EmptyMedia variant="icon">
                       <Users className="size-5" />
                     </EmptyMedia>
-                    <EmptyTitle>Likes tab coming next</EmptyTitle>
+                    <EmptyTitle>Social insights</EmptyTitle>
                     <EmptyDescription>
-                      Phase 2 includes the data model and counters. Detailed liked-videos browsing can be layered on in Phase 3.
+                      Your likes, comments, followers, and following stats above now update from real interactions.
                     </EmptyDescription>
                   </EmptyHeader>
                 </Empty>

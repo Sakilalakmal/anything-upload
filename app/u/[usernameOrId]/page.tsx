@@ -6,6 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { FollowButton } from "@/components/social/follow-button"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { getCurrentUser } from "@/lib/auth-guards"
@@ -57,9 +58,13 @@ export default async function PublicProfilePage({ params }: PublicProfilePagePro
                 <Link href="/profile">Edit profile</Link>
               </Button>
             ) : (
-              <Button disabled variant="outline">
-                {profile.viewer.isFollowing ? "Following" : "Follow"} (Phase 2 read-only)
-              </Button>
+              <FollowButton
+                targetUserId={profile.user.id}
+                profilePath={`/u/${profile.user.username ?? profile.user.id}`}
+                initialFollowing={profile.viewer.isFollowing}
+                initialFollowerCount={profile.stats.followers}
+                isAuthenticated={Boolean(viewer)}
+              />
             )}
           </div>
         </div>
@@ -82,7 +87,7 @@ export default async function PublicProfilePage({ params }: PublicProfilePagePro
       <Card className="border-border/60">
         <CardHeader className="pb-3">
           <CardTitle>Public profile</CardTitle>
-          <CardDescription>Read-only viewer surface for Phase 2.</CardDescription>
+          <CardDescription>Follow creators, explore uploads, and join discussions.</CardDescription>
         </CardHeader>
         <CardContent>
           <Tabs defaultValue="videos">
