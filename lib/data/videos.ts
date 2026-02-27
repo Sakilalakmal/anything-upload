@@ -109,7 +109,30 @@ export async function getVideoById(videoId: string, viewerId?: string | null) {
           name: true,
           username: true,
           avatarUrl: true,
+          followers: {
+            where: {
+              followerId: viewerId ?? "__anonymous_viewer__",
+            },
+            select: {
+              followerId: true,
+            },
+            take: 1,
+          },
+          _count: {
+            select: {
+              followers: true,
+            },
+          },
         },
+      },
+      likes: {
+        where: {
+          userId: viewerId ?? "__anonymous_viewer__",
+        },
+        select: {
+          id: true,
+        },
+        take: 1,
       },
       _count: {
         select: {
@@ -132,6 +155,9 @@ export async function getVideoById(videoId: string, viewerId?: string | null) {
 
   return {
     ...video,
+    viewerLiked: video.likes.length > 0,
+    viewerFollowingCreator: video.user.followers.length > 0,
+    creatorFollowerCount: video.user._count.followers,
     canView,
     isOwner,
   }

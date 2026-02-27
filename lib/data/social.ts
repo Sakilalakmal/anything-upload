@@ -1,19 +1,83 @@
 import "server-only"
 
 import { Prisma, VideoVisibility } from "@prisma/client"
-import { z } from "zod"
+import { formatDistanceToNow } from "date-fns"
 
-import { requireUser } from "@/lib/auth-guards"
+import { requireUserOrThrow } from "@/lib/auth-guards"
+import type { CommentItem, CommentsPagePayload } from "@/lib/data/social-types"
+import { decodeCursor, normalizeLimit, toCursorPage } from "@/lib/data/pagination"
 import { prisma } from "@/lib/prisma"
-import { addCommentSchema } from "@/lib/validations/social"
+import { addCommentSchema, userIdSchema, videoIdSchema } from "@/lib/validations/social"
 
-const cuidSchema = z.string().cuid("Invalid id.")
+const DEFAULT_COMMENTS_PAGE_SIZE = 12
+const COMMENT_RATE_LIMIT_MS = 2_000
+const commentThrottleStore = new Map<string, number>()
+
+const commentSelect = {
+  id: true,
+  content: true,
+  createdAt: true,
+  user: {
+    select: {
+      id: true,
+      name: true,
+      username: true,
+      avatarUrl: true,
+    },
+  },
+} satisfies Prisma.CommentSelect
+
+type CommentRecord = Prisma.CommentGetPayload<{
+  select: typeof commentSelect
+}>
+
+export type CommentsQuery = {
+  videoId: string
+  cursor?: string | null
+  limit?: number
+  viewerId?: string | null
+}
 
 function isUniqueConstraintError(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002"
 }
 
-async function ensureVideoIsInteractable(videoId: string, viewerId: string) {
+function toCommentItem(comment: CommentRecord): CommentItem {
+  return {
+    id: comment.id,
+    content: comment.content,
+    createdAt: comment.createdAt.toISOString(),
+    createdAtRelative: formatDistanceToNow(comment.createdAt, { addSuffix: true }),
+    user: {
+      id: comment.user.id,
+      name: comment.user.name,
+      username: comment.user.username,
+      avatarUrl: comment.user.avatarUrl,
+    },
+  }
+}
+
+function enforceCommentRateLimit(userId: string, videoId: string) {
+  const now = Date.now()
+  const key = `${userId}:${videoId}`
+  const previous = commentThrottleStore.get(key)
+
+  if (previous && now - previous < COMMENT_RATE_LIMIT_MS) {
+    throw new Error("You are commenting too fast. Please wait a moment.")
+  }
+
+  commentThrottleStore.set(key, now)
+
+  if (commentThrottleStore.size > 10_000) {
+    for (const [entryKey, lastSeenAt] of commentThrottleStore) {
+      if (now - lastSeenAt > COMMENT_RATE_LIMIT_MS * 60) {
+        commentThrottleStore.delete(entryKey)
+      }
+    }
+  }
+}
+
+async function ensureVideoIsAccessible(videoId: string, viewerId?: string | null) {
   const video = await prisma.video.findUnique({
     where: { id: videoId },
     select: {
@@ -27,145 +91,205 @@ async function ensureVideoIsInteractable(videoId: string, viewerId: string) {
     throw new Error("Video not found.")
   }
 
-  const canInteract = video.visibility !== VideoVisibility.PRIVATE || video.userId === viewerId
+  const canAccess = video.visibility !== VideoVisibility.PRIVATE || video.userId === viewerId
 
-  if (!canInteract) {
+  if (!canAccess) {
     throw new Error("You do not have access to this video.")
   }
+
+  return video
 }
 
-export async function likeVideo(videoId: string) {
-  const user = await requireUser()
-  const parsedVideoId = cuidSchema.parse(videoId)
+export async function toggleLike(videoId: string) {
+  const user = await requireUserOrThrow()
+  const parsedVideoId = videoIdSchema.parse(videoId)
 
-  await ensureVideoIsInteractable(parsedVideoId, user.id)
+  await ensureVideoIsAccessible(parsedVideoId, user.id)
 
-  try {
-    await prisma.like.create({
-      data: {
+  return prisma.$transaction(async (tx) => {
+    const where = {
+      userId_videoId: {
         userId: user.id,
+        videoId: parsedVideoId,
+      },
+    }
+
+    const existingLike = await tx.like.findUnique({
+      where,
+      select: { id: true },
+    })
+
+    let liked: boolean
+
+    if (existingLike) {
+      await tx.like.delete({ where })
+      liked = false
+    } else {
+      try {
+        await tx.like.create({
+          data: {
+            userId: user.id,
+            videoId: parsedVideoId,
+          },
+        })
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) {
+          throw error
+        }
+      }
+
+      liked = true
+    }
+
+    const likeCount = await tx.like.count({
+      where: {
         videoId: parsedVideoId,
       },
     })
 
     return {
-      liked: true,
-      changed: true,
+      liked,
+      likeCount,
     }
-  } catch (error) {
-    if (isUniqueConstraintError(error)) {
-      return {
-        liked: true,
-        changed: false,
-      }
-    }
-
-    throw error
-  }
-}
-
-export async function unlikeVideo(videoId: string) {
-  const user = await requireUser()
-  const parsedVideoId = cuidSchema.parse(videoId)
-
-  const result = await prisma.like.deleteMany({
-    where: {
-      userId: user.id,
-      videoId: parsedVideoId,
-    },
   })
-
-  return {
-    liked: false,
-    changed: result.count > 0,
-  }
 }
 
-export async function addComment(input: unknown) {
-  const user = await requireUser()
+export async function createComment(input: unknown) {
+  const user = await requireUserOrThrow()
   const parsed = addCommentSchema.parse(input)
 
-  await ensureVideoIsInteractable(parsed.videoId, user.id)
+  await ensureVideoIsAccessible(parsed.videoId, user.id)
+  enforceCommentRateLimit(user.id, parsed.videoId)
 
-  return prisma.comment.create({
+  const createdComment = await prisma.comment.create({
     data: {
       userId: user.id,
       videoId: parsed.videoId,
       content: parsed.content,
     },
-    select: {
-      id: true,
-      content: true,
-      createdAt: true,
-      user: {
-        select: {
-          id: true,
-          name: true,
-          username: true,
-          avatarUrl: true,
-        },
-      },
-    },
-  })
-}
-
-export async function followUser(targetUserId: string) {
-  const user = await requireUser()
-  const parsedTargetId = cuidSchema.parse(targetUserId)
-
-  if (user.id === parsedTargetId) {
-    return {
-      following: false,
-      changed: false,
-    }
-  }
-
-  const targetUserExists = await prisma.user.findUnique({
-    where: { id: parsedTargetId },
-    select: { id: true },
+    select: commentSelect,
   })
 
-  if (!targetUserExists) {
-    throw new Error("User not found.")
-  }
-
-  try {
-    await prisma.follow.create({
-      data: {
-        followerId: user.id,
-        followingId: parsedTargetId,
-      },
-    })
-
-    return {
-      following: true,
-      changed: true,
-    }
-  } catch (error) {
-    if (isUniqueConstraintError(error)) {
-      return {
-        following: true,
-        changed: false,
-      }
-    }
-
-    throw error
-  }
-}
-
-export async function unfollowUser(targetUserId: string) {
-  const user = await requireUser()
-  const parsedTargetId = cuidSchema.parse(targetUserId)
-
-  const result = await prisma.follow.deleteMany({
+  const commentCount = await prisma.comment.count({
     where: {
-      followerId: user.id,
-      followingId: parsedTargetId,
+      videoId: parsed.videoId,
     },
   })
 
   return {
-    following: false,
-    changed: result.count > 0,
+    comment: toCommentItem(createdComment),
+    commentCount,
   }
+}
+
+export async function getComments(query: CommentsQuery): Promise<CommentsPagePayload> {
+  const parsedVideoId = videoIdSchema.parse(query.videoId)
+  const parsedCursor = decodeCursor(query.cursor)
+  const limit = normalizeLimit(query.limit, DEFAULT_COMMENTS_PAGE_SIZE)
+
+  await ensureVideoIsAccessible(parsedVideoId, query.viewerId ?? null)
+
+  const comments = await prisma.comment.findMany({
+    where: {
+      videoId: parsedVideoId,
+      ...(parsedCursor
+        ? {
+            OR: [
+              {
+                createdAt: {
+                  lt: parsedCursor.createdAt,
+                },
+              },
+              {
+                createdAt: parsedCursor.createdAt,
+                id: {
+                  lt: parsedCursor.id,
+                },
+              },
+            ],
+          }
+        : {}),
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: limit + 1,
+    select: commentSelect,
+  })
+
+  const page = toCursorPage(comments, limit)
+
+  return {
+    items: page.items.map(toCommentItem),
+    nextCursor: page.nextCursor,
+  }
+}
+
+export async function toggleFollow(targetUserId: string) {
+  const user = await requireUserOrThrow()
+  const parsedTargetUserId = userIdSchema.parse(targetUserId)
+
+  if (user.id === parsedTargetUserId) {
+    throw new Error("You cannot follow yourself.")
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const targetUser = await tx.user.findUnique({
+      where: {
+        id: parsedTargetUserId,
+      },
+      select: {
+        id: true,
+      },
+    })
+
+    if (!targetUser) {
+      throw new Error("User not found.")
+    }
+
+    const where = {
+      followerId_followingId: {
+        followerId: user.id,
+        followingId: parsedTargetUserId,
+      },
+    }
+
+    const existingFollow = await tx.follow.findUnique({
+      where,
+      select: {
+        followerId: true,
+      },
+    })
+
+    let following: boolean
+
+    if (existingFollow) {
+      await tx.follow.delete({ where })
+      following = false
+    } else {
+      try {
+        await tx.follow.create({
+          data: {
+            followerId: user.id,
+            followingId: parsedTargetUserId,
+          },
+        })
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) {
+          throw error
+        }
+      }
+
+      following = true
+    }
+
+    const followerCount = await tx.follow.count({
+      where: {
+        followingId: parsedTargetUserId,
+      },
+    })
+
+    return {
+      following,
+      followerCount,
+    }
+  })
 }

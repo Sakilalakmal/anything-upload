@@ -1,12 +1,14 @@
 import Link from "next/link"
 import { notFound } from "next/navigation"
-import { AlertCircle, Clapperboard, Heart, MessageCircle } from "lucide-react"
+import { AlertCircle, Clapperboard } from "lucide-react"
 
+import { FollowButton } from "@/components/social/follow-button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
+import { VideoPageInteractions } from "@/components/video/video-page-interactions"
 import { getCurrentUser } from "@/lib/auth-guards"
 import { getVideoById } from "@/lib/data/videos"
 
@@ -56,9 +58,19 @@ export default async function VideoPage({ params }: VideoPageProps) {
                   <p className="text-xs text-muted-foreground">@{video.user.username ?? video.user.id.slice(0, 8)}</p>
                 </div>
               </Link>
-              <Button disabled variant="outline">
-                Follow (Phase 2 read-only)
-              </Button>
+              {video.isOwner ? (
+                <Button asChild variant="outline">
+                  <Link href="/profile">Edit profile</Link>
+                </Button>
+              ) : (
+                <FollowButton
+                  targetUserId={video.user.id}
+                  profilePath={`/u/${video.user.username ?? video.user.id}`}
+                  initialFollowing={video.viewerFollowingCreator}
+                  initialFollowerCount={video.creatorFollowerCount}
+                  isAuthenticated={Boolean(viewer)}
+                />
+              )}
             </div>
           </CardHeader>
         ) : (
@@ -101,16 +113,13 @@ export default async function VideoPage({ params }: VideoPageProps) {
             </Empty>
           )}
           {video.canView ? (
-            <div className="flex items-center gap-4 text-sm text-muted-foreground">
-              <span className="inline-flex items-center gap-1">
-                <Heart className="size-4" />
-                {video._count.likes} likes
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <MessageCircle className="size-4" />
-                {video._count.comments} comments
-              </span>
-            </div>
+            <VideoPageInteractions
+              videoId={video.id}
+              initialLiked={video.viewerLiked}
+              initialLikeCount={video._count.likes}
+              initialCommentCount={video._count.comments}
+              isAuthenticated={Boolean(viewer)}
+            />
           ) : null}
         </CardContent>
       </Card>
