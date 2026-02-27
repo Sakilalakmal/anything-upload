@@ -11,12 +11,20 @@ model User {
   id            String    @id @default(cuid())
   email         String    @unique
   name          String?
+  username      String?   @unique @db.VarChar(24)
+  bio           String?   @db.VarChar(280)
+  avatarUrl     String?
   image         String?
   emailVerified Boolean   @default(false)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   accounts      Account[]
   sessions      Session[]
+  videos        Video[]
+  likes         Like[]
+  comments      Comment[]
+  followers     Follow[]  @relation("UserFollowers")
+  following     Follow[]  @relation("UserFollowing")
 
   @@index([createdAt])
 }
@@ -66,4 +74,93 @@ model Verification {
 
   @@index([identifier])
   @@index([expiresAt])
+}
+
+enum VideoVisibility {
+  PUBLIC
+  UNLISTED
+  PRIVATE
+}
+
+enum VideoStatus {
+  PROCESSING
+  READY
+  FAILED
+}
+
+model Video {
+  id           String          @id @default(cuid())
+  userId       String
+  title        String          @db.VarChar(160)
+  description  String?         @db.VarChar(2000)
+  videoUrl     String?
+  thumbnailUrl String?
+  durationSec  Int?
+  visibility   VideoVisibility @default(PUBLIC)
+  status       VideoStatus     @default(PROCESSING)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  likes        Like[]
+  comments     Comment[]
+  tags         VideoTag[]
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@index([visibility, status, createdAt])
+  @@unique([createdAt, id])
+}
+
+model Like {
+  id        String   @id @default(cuid())
+  userId    String
+  videoId   String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, videoId])
+  @@index([videoId])
+  @@index([userId])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  userId    String
+  videoId   String
+  content   String   @db.VarChar(500)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([videoId, createdAt])
+}
+
+model Follow {
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+  follower    User     @relation("UserFollowing", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("UserFollowers", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@id([followerId, followingId])
+  @@index([followingId])
+  @@index([followerId])
+}
+
+model Tag {
+  id        String    @id @default(cuid())
+  name      String    @unique @db.VarChar(50)
+  createdAt DateTime  @default(now())
+  videos    VideoTag[]
+}
+
+model VideoTag {
+  videoId String
+  tagId   String
+  video   Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  tag     Tag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([videoId, tagId])
+  @@index([tagId])
 }

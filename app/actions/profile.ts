@@ -1,33 +1,27 @@
 "use server"
 
 import { revalidatePath } from "next/cache"
-import { z } from "zod"
-
-import { requireUser } from "@/lib/auth-guards"
-import { prisma } from "@/lib/prisma"
-
-const profileSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .max(60, "Display name must be 60 characters or less.")
-    .transform((value) => (value ? value : null)),
-})
+import { UsernameAlreadyInUseError, updateCurrentUserProfile } from "@/lib/data/users"
+import { profileUpdateSchema } from "@/lib/validations/users"
 
 type ProfileFormState = {
   error?: string
   success?: string
   fieldErrors?: {
     name?: string[]
+    username?: string[]
+    bio?: string[]
   }
 }
 
-export async function updateProfileNameAction(
+export async function updateProfileAction(
   _prevState: ProfileFormState,
   formData: FormData
 ): Promise<ProfileFormState> {
-  const parsed = profileSchema.safeParse({
+  const parsed = profileUpdateSchema.safeParse({
     name: typeof formData.get("name") === "string" ? formData.get("name") : "",
+    username: typeof formData.get("username") === "string" ? formData.get("username") : "",
+    bio: typeof formData.get("bio") === "string" ? formData.get("bio") : "",
   })
 
   if (!parsed.success) {
@@ -36,14 +30,21 @@ export async function updateProfileNameAction(
     }
   }
 
-  const user = await requireUser()
+  try {
+    await updateCurrentUserProfile(parsed.data)
+  } catch (error) {
+    if (error instanceof UsernameAlreadyInUseError) {
+      return {
+        fieldErrors: {
+          username: [error.message],
+        },
+      }
+    }
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      name: parsed.data.name,
-    },
-  })
+    return {
+      error: "Unable to update profile right now. Please try again.",
+    }
+  }
 
   revalidatePath("/profile")
 

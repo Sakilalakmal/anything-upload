@@ -17,7 +17,9 @@ export async function Navbar() {
           {user ? (
             <>
               <Button asChild variant="ghost">
-                <Link href="/profile">Profile</Link>
+                <Link href="/profile" prefetch={false}>
+                  Profile
+                </Link>
               </Button>
               <form action={signOutAction}>
                 <Button type="submit" variant="outline">
