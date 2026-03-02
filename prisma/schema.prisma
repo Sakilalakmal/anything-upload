@@ -25,6 +25,8 @@ model User {
   comments      Comment[]
   followers     Follow[]  @relation("UserFollowers")
   following     Follow[]  @relation("UserFollowing")
+  recipientNotifications Notification[] @relation("RecipientNotifications")
+  actorNotifications     Notification[] @relation("ActorNotifications")
 
   @@index([createdAt])
 }
@@ -88,6 +90,12 @@ enum VideoStatus {
   FAILED
 }
 
+enum NotificationType {
+  LIKE
+  COMMENT
+  FOLLOW
+}
+
 model Video {
   id           String          @id @default(cuid())
   userId       String
@@ -104,6 +112,7 @@ model Video {
   likes        Like[]
   comments     Comment[]
   tags         VideoTag[]
+  notifications Notification[]
 
   @@index([createdAt])
   @@index([userId, createdAt])
@@ -132,6 +141,7 @@ model Comment {
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  notifications Notification[]
 
   @@index([videoId, createdAt])
 }
@@ -146,6 +156,26 @@ model Follow {
   @@id([followerId, followingId])
   @@index([followingId])
   @@index([followerId])
+}
+
+model Notification {
+  id          String           @id @default(cuid())
+  type        NotificationType
+  recipientId String
+  actorId     String
+  videoId     String?
+  commentId   String?
+  dedupeKey   String?          @unique
+  readAt      DateTime?
+  createdAt   DateTime         @default(now())
+  recipient   User             @relation("RecipientNotifications", fields: [recipientId], references: [id], onDelete: Cascade)
+  actor       User             @relation("ActorNotifications", fields: [actorId], references: [id], onDelete: Cascade)
+  video       Video?           @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  comment     Comment?         @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@index([recipientId, createdAt, id])
+  @@index([recipientId, readAt, createdAt, id])
+  @@index([actorId, createdAt])
 }
 
 model Tag {

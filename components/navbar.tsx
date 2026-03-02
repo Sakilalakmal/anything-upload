@@ -1,12 +1,11 @@
 import Link from "next/link"
 
 import { signOutAction } from "@/app/actions/auth"
+import { InboxNavLink } from "@/components/notifications/inbox-nav-link"
 import { Button } from "@/components/ui/button"
-import { getCurrentUser } from "@/lib/auth-guards"
+import type { AuthUser } from "@/lib/auth-guards"
 
-export async function Navbar() {
-  const user = await getCurrentUser()
-
+export function Navbar({ user }: { user: AuthUser | null }) {
   return (
     <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between px-4">
@@ -14,8 +13,14 @@ export async function Navbar() {
           Anything
         </Link>
         <nav className="flex items-center gap-2">
+          <Button asChild variant="ghost">
+            <Link href="/discover" prefetch={false}>
+              Discover
+            </Link>
+          </Button>
           {user ? (
             <>
+              <InboxNavLink />
               <Button asChild variant="ghost">
                 <Link href="/upload" prefetch={false}>
                   Upload

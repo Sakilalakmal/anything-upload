@@ -4,6 +4,11 @@ import { Prisma, VideoVisibility } from "@prisma/client"
 import { formatDistanceToNow } from "date-fns"
 
 import { requireUserOrThrow } from "@/lib/auth-guards"
+import {
+  createNotificationComment,
+  createNotificationFollow,
+  createNotificationLike,
+} from "@/lib/data/notifications"
 import type { CommentItem, CommentsPagePayload } from "@/lib/data/social-types"
 import { decodeCursor, normalizeLimit, toCursorPage } from "@/lib/data/pagination"
 import { prisma } from "@/lib/prisma"
@@ -77,6 +82,14 @@ function enforceCommentRateLimit(userId: string, videoId: string) {
   }
 }
 
+async function safelyRunNotification(task: () => Promise<unknown>) {
+  try {
+    await task()
+  } catch (error) {
+    console.error("Notification write failed.", error)
+  }
+}
+
 async function ensureVideoIsAccessible(videoId: string, viewerId?: string | null) {
   const video = await prisma.video.findUnique({
     where: { id: videoId },
@@ -106,7 +119,7 @@ export async function toggleLike(videoId: string) {
 
   await ensureVideoIsAccessible(parsedVideoId, user.id)
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const where = {
       userId_videoId: {
         userId: user.id,
@@ -120,6 +133,7 @@ export async function toggleLike(videoId: string) {
     })
 
     let liked: boolean
+    let shouldNotify = false
 
     if (existingLike) {
       await tx.like.delete({ where })
@@ -139,6 +153,7 @@ export async function toggleLike(videoId: string) {
       }
 
       liked = true
+      shouldNotify = true
     }
 
     const likeCount = await tx.like.count({
@@ -150,8 +165,23 @@ export async function toggleLike(videoId: string) {
     return {
       liked,
       likeCount,
+      shouldNotify,
     }
   })
+
+  if (result.shouldNotify) {
+    await safelyRunNotification(() =>
+      createNotificationLike({
+        actorId: user.id,
+        videoId: parsedVideoId,
+      })
+    )
+  }
+
+  return {
+    liked: result.liked,
+    likeCount: result.likeCount,
+  }
 }
 
 export async function createComment(input: unknown) {
@@ -175,6 +205,14 @@ export async function createComment(input: unknown) {
       videoId: parsed.videoId,
     },
   })
+
+  await safelyRunNotification(() =>
+    createNotificationComment({
+      actorId: user.id,
+      videoId: parsed.videoId,
+      commentId: createdComment.id,
+    })
+  )
 
   return {
     comment: toCommentItem(createdComment),
@@ -231,7 +269,7 @@ export async function toggleFollow(targetUserId: string) {
     throw new Error("You cannot follow yourself.")
   }
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const targetUser = await tx.user.findUnique({
       where: {
         id: parsedTargetUserId,
@@ -260,6 +298,7 @@ export async function toggleFollow(targetUserId: string) {
     })
 
     let following: boolean
+    let shouldNotify = false
 
     if (existingFollow) {
       await tx.follow.delete({ where })
@@ -279,6 +318,7 @@ export async function toggleFollow(targetUserId: string) {
       }
 
       following = true
+      shouldNotify = true
     }
 
     const followerCount = await tx.follow.count({
@@ -290,6 +330,21 @@ export async function toggleFollow(targetUserId: string) {
     return {
       following,
       followerCount,
+      shouldNotify,
     }
   })
+
+  if (result.shouldNotify) {
+    await safelyRunNotification(() =>
+      createNotificationFollow({
+        actorId: user.id,
+        targetUserId: parsedTargetUserId,
+      })
+    )
+  }
+
+  return {
+    following: result.following,
+    followerCount: result.followerCount,
+  }
 }
