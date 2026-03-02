@@ -12,18 +12,54 @@ type CommentsSheetProps = {
   title: string
   initialCommentCount: number
   isAuthenticated: boolean
+  layout?: "pill" | "rail"
 }
 
-export function CommentsSheet({ videoId, title, initialCommentCount, isAuthenticated }: CommentsSheetProps) {
+const compactNumberFormatter = new Intl.NumberFormat("en", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+})
+
+function formatCount(value: number) {
+  return compactNumberFormatter.format(value)
+}
+
+export function CommentsSheet({
+  videoId,
+  title,
+  initialCommentCount,
+  isAuthenticated,
+  layout = "pill",
+}: CommentsSheetProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [commentCount, setCommentCount] = useState(initialCommentCount)
 
   return (
     <Sheet open={isOpen} onOpenChange={setIsOpen}>
       <SheetTrigger asChild>
-        <Button type="button" size="sm" variant="ghost" className="h-8 rounded-full px-2.5 transition-transform hover:-translate-y-0.5">
-          <MessageCircle className="size-4" />
-          {commentCount}
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className={
+            layout === "rail"
+              ? "group h-auto min-w-0 flex-col gap-1 rounded-none p-0 hover:bg-transparent"
+              : "h-8 rounded-full px-2.5 transition-transform hover:-translate-y-0.5"
+          }
+        >
+          {layout === "rail" ? (
+            <>
+              <span className="flex size-12 items-center justify-center rounded-full bg-[#f1f1f2] text-foreground transition-transform duration-200 group-hover:scale-105">
+                <MessageCircle className="size-5" />
+              </span>
+              <span className="text-[13px] font-semibold text-foreground">{formatCount(commentCount)}</span>
+            </>
+          ) : (
+            <>
+              <MessageCircle className="size-4" />
+              {formatCount(commentCount)}
+            </>
+          )}
         </Button>
       </SheetTrigger>
       <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-md">

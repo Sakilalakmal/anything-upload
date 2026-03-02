@@ -22,7 +22,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Anything",
-  description: "Phase 1 authentication and user accounts",
+  description: "Short-form video platform with a clean TikTok-inspired browsing experience",
 }
 
 export default async function RootLayout({
@@ -45,11 +45,11 @@ export default async function RootLayout({
 
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body className={`${geistSans.variable} ${geistMono.variable} bg-[#fafafa] font-sans text-foreground antialiased`}>
         <NotificationsProvider initialUnreadCount={initialUnreadCount} sessionUserId={user?.id ?? null}>
-          <div className="min-h-screen bg-muted/30">
+          <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.96),_rgba(250,250,250,1)_45%,_rgba(245,245,245,1))]">
             <Navbar user={user} />
-            <main className="mx-auto w-full max-w-5xl px-4 py-10">{children}</main>
+            <main className="mx-auto w-full max-w-[1280px] px-3 pb-10 pt-4 sm:px-4 lg:px-6 lg:pt-6">{children}</main>
           </div>
         </NotificationsProvider>
         <Toaster richColors closeButton position="top-right" />
