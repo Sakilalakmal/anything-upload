@@ -1,5 +1,7 @@
 import { z } from "zod"
 
+import { userIdSchema } from "@/lib/validations/social"
+
 export const discoverTabSchema = z.enum(["videos", "users"])
 export const discoverVideoSortSchema = z.enum(["latest", "top"])
 
@@ -37,7 +39,7 @@ export const searchVideosInputSchema = z.object({
     .optional()
     .nullable()
     .transform((value) => (value && value.length > 0 ? value : null)),
-  viewerId: z.string().cuid().nullable().optional(),
+  viewerId: userIdSchema.nullable().optional(),
 })
 
 export const searchUsersInputSchema = z.object({

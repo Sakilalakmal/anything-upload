@@ -3,11 +3,20 @@ import { redirect } from "next/navigation"
 import { cache } from "react"
 
 import { auth } from "@/lib/auth"
+import { isPrismaDatabaseConnectivityError } from "@/lib/prisma-errors"
 
 export const getCurrentSession = cache(async () => {
-  return auth.api.getSession({
-    headers: await headers(),
-  })
+  try {
+    return await auth.api.getSession({
+      headers: await headers(),
+    })
+  } catch (error) {
+    if (isPrismaDatabaseConnectivityError(error)) {
+      return null
+    }
+
+    throw error
+  }
 })
 
 export async function getCurrentUser() {

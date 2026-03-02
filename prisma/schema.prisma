@@ -5,26 +5,27 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  name          String?
-  username      String?   @unique @db.VarChar(24)
-  bio           String?   @db.VarChar(280)
-  avatarUrl     String?
-  image         String?
-  emailVerified Boolean   @default(false)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  accounts      Account[]
-  sessions      Session[]
-  videos        Video[]
-  likes         Like[]
-  comments      Comment[]
-  followers     Follow[]  @relation("UserFollowers")
-  following     Follow[]  @relation("UserFollowing")
+  id                     String         @id @default(cuid())
+  email                  String         @unique
+  name                   String?
+  username               String?        @unique @db.VarChar(24)
+  bio                    String?        @db.VarChar(280)
+  avatarUrl              String?
+  image                  String?
+  emailVerified          Boolean        @default(false)
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+  accounts               Account[]
+  sessions               Session[]
+  videos                 Video[]
+  likes                  Like[]
+  comments               Comment[]
+  followers              Follow[]       @relation("UserFollowers")
+  following              Follow[]       @relation("UserFollowing")
   recipientNotifications Notification[] @relation("RecipientNotifications")
   actorNotifications     Notification[] @relation("ActorNotifications")
 
@@ -97,27 +98,27 @@ enum NotificationType {
 }
 
 model Video {
-  id           String          @id @default(cuid())
-  userId       String
-  title        String          @db.VarChar(160)
-  description  String?         @db.VarChar(2000)
-  videoUrl     String?
-  thumbnailUrl String?
-  durationSec  Int?
-  visibility   VideoVisibility @default(PUBLIC)
-  status       VideoStatus     @default(PROCESSING)
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  likes        Like[]
-  comments     Comment[]
-  tags         VideoTag[]
+  id            String          @id @default(cuid())
+  userId        String
+  title         String          @db.VarChar(160)
+  description   String?         @db.VarChar(2000)
+  videoUrl      String?
+  thumbnailUrl  String?
+  durationSec   Int?
+  visibility    VideoVisibility @default(PUBLIC)
+  status        VideoStatus     @default(PROCESSING)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  likes         Like[]
+  comments      Comment[]
+  tags          VideoTag[]
   notifications Notification[]
 
+  @@unique([createdAt, id])
   @@index([createdAt])
   @@index([userId, createdAt])
   @@index([visibility, status, createdAt])
-  @@unique([createdAt, id])
 }
 
 model Like {
@@ -134,13 +135,13 @@ model Like {
 }
 
 model Comment {
-  id        String   @id @default(cuid())
-  userId    String
-  videoId   String
-  content   String   @db.VarChar(500)
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  id            String         @id @default(cuid())
+  userId        String
+  videoId       String
+  content       String         @db.VarChar(500)
+  createdAt     DateTime       @default(now())
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video         Video          @relation(fields: [videoId], references: [id], onDelete: Cascade)
   notifications Notification[]
 
   @@index([videoId, createdAt])
@@ -179,17 +180,17 @@ model Notification {
 }
 
 model Tag {
-  id        String    @id @default(cuid())
-  name      String    @unique @db.VarChar(50)
-  createdAt DateTime  @default(now())
+  id        String     @id @default(cuid())
+  name      String     @unique @db.VarChar(50)
+  createdAt DateTime   @default(now())
   videos    VideoTag[]
 }
 
 model VideoTag {
   videoId String
   tagId   String
-  video   Video @relation(fields: [videoId], references: [id], onDelete: Cascade)
-  tag     Tag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  video   Video  @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  tag     Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
   @@id([videoId, tagId])
   @@index([tagId])
