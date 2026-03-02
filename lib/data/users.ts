@@ -39,6 +39,59 @@ const userProfileSelect = {
   createdAt: true,
 } as const
 
+export async function getSuggestedCreators({
+  viewerId,
+  limit = 5,
+}: {
+  viewerId?: string | null
+  limit?: number
+} = {}) {
+  const take = Math.min(Math.max(Math.floor(limit), 1), 8)
+
+  return prisma.user.findMany({
+    where: {
+      videos: {
+        some: {
+          visibility: VideoVisibility.PUBLIC,
+          status: VideoStatus.READY,
+          videoUrl: {
+            not: null,
+          },
+        },
+      },
+      ...(viewerId
+        ? {
+            id: {
+              not: viewerId,
+            },
+          }
+        : {}),
+    },
+    orderBy: [{ followers: { _count: "desc" } }, { createdAt: "desc" }],
+    take,
+    select: {
+      id: true,
+      username: true,
+      name: true,
+      avatarUrl: true,
+      followers: {
+        where: {
+          followerId: viewerId ?? "__anonymous_viewer__",
+        },
+        select: {
+          followerId: true,
+        },
+        take: 1,
+      },
+      _count: {
+        select: {
+          followers: true,
+        },
+      },
+    },
+  })
+}
+
 export async function fetchUserProfileWithVideos(query: UserProfileVideosQuery) {
   const identifier = userIdentifierSchema.parse(query.identifier)
   const limit = normalizeLimit(query.limit)

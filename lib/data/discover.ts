@@ -100,19 +100,19 @@ function buildVideoVisibilityClause(viewerId: string | null | undefined) {
   if (viewerId) {
     return Prisma.sql`(
       (
-        v."visibility" = ${VideoVisibility.PUBLIC}
-        AND v."status" = ${VideoStatus.READY}
+        v."visibility" = CAST(${VideoVisibility.PUBLIC} AS "VideoVisibility")
+        AND v."status" = CAST(${VideoStatus.READY} AS "VideoStatus")
       )
       OR (
         v."userId" = ${viewerId}
-        AND v."status" = ${VideoStatus.READY}
+        AND v."status" = CAST(${VideoStatus.READY} AS "VideoStatus")
       )
     )`
   }
 
   return Prisma.sql`(
-    v."visibility" = ${VideoVisibility.PUBLIC}
-    AND v."status" = ${VideoStatus.READY}
+    v."visibility" = CAST(${VideoVisibility.PUBLIC} AS "VideoVisibility")
+    AND v."status" = CAST(${VideoStatus.READY} AS "VideoStatus")
   )`
 }
 
@@ -438,8 +438,8 @@ export async function getDiscoverTagOptions(limit = 12): Promise<DiscoverTagOpti
     FROM "Tag" t
     INNER JOIN "VideoTag" vt ON vt."tagId" = t.id
     INNER JOIN "Video" v ON v.id = vt."videoId"
-    WHERE v."visibility" = ${VideoVisibility.PUBLIC}
-      AND v."status" = ${VideoStatus.READY}
+    WHERE v."visibility" = CAST(${VideoVisibility.PUBLIC} AS "VideoVisibility")
+      AND v."status" = CAST(${VideoStatus.READY} AS "VideoStatus")
       AND v."videoUrl" IS NOT NULL
     GROUP BY t.id, t.name
     ORDER BY COUNT(*) DESC, t.name ASC

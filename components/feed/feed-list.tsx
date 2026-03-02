@@ -13,11 +13,12 @@ type FeedListProps = {
   initialItems: FeedVideoItem[]
   initialNextCursor: string | null
   isAuthenticated: boolean
+  viewerUserId: string | null
 }
 
 const FETCH_DEBOUNCE_MS = 250
 
-export function FeedList({ initialItems, initialNextCursor, isAuthenticated }: FeedListProps) {
+export function FeedList({ initialItems, initialNextCursor, isAuthenticated, viewerUserId }: FeedListProps) {
   const [items, setItems] = useState(initialItems)
   const [nextCursor, setNextCursor] = useState(initialNextCursor)
   const [isLoading, setIsLoading] = useState(false)
@@ -94,13 +95,13 @@ export function FeedList({ initialItems, initialNextCursor, isAuthenticated }: F
   }, [loadMore, nextCursor])
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-8">
       {items.map((item) => (
-        <VideoCard key={item.id} item={item} isAuthenticated={isAuthenticated} />
+        <VideoCard key={item.id} item={item} isAuthenticated={isAuthenticated} viewerUserId={viewerUserId} />
       ))}
 
       {isLoading ? (
-        <div className="space-y-5">
+        <div className="space-y-8">
           <FeedCardSkeleton />
           <FeedCardSkeleton />
         </div>
@@ -128,31 +129,33 @@ export function FeedList({ initialItems, initialNextCursor, isAuthenticated }: F
 
 function FeedCardSkeleton() {
   return (
-    <Card className="mx-auto w-full max-w-[34rem] gap-4 overflow-hidden py-0">
-      <CardHeader className="space-y-3 px-3.5 pt-3.5">
-        <div className="flex items-center justify-between gap-3">
+    <Card className="mx-auto w-full max-w-[46rem] gap-4 border-none py-0 shadow-none">
+      <CardHeader className="space-y-3 px-0 pt-0">
+        <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
-            <Skeleton className="size-6 rounded-full" />
+            <Skeleton className="size-12 rounded-full" />
             <div className="space-y-1.5">
               <Skeleton className="h-3 w-28" />
               <Skeleton className="h-3 w-20" />
             </div>
           </div>
-          <Skeleton className="h-6 w-20 rounded-full" />
+          <Skeleton className="h-10 w-24 rounded-xl" />
         </div>
-        <Skeleton className="h-4 w-11/12" />
+        <Skeleton className="h-4 w-10/12" />
+        <Skeleton className="h-4 w-8/12" />
       </CardHeader>
-      <CardContent className="space-y-3 px-3.5 pb-3.5">
-        <div className="overflow-hidden rounded-2xl border border-border/70">
-          <div className="mx-auto w-full max-w-[23rem]">
+      <CardContent className="px-0 pb-0">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+          <div className="relative w-full max-w-[22rem] overflow-hidden rounded-[24px]">
             <div className="relative h-0 pb-[177.78%]">
-              <Skeleton className="absolute inset-0 rounded-none" />
+              <Skeleton className="absolute inset-0 rounded-[24px]" />
             </div>
           </div>
-        </div>
-        <div className="flex items-center justify-between">
-          <Skeleton className="h-6 w-16 rounded-full" />
-          <Skeleton className="h-3 w-32" />
+          <div className="flex items-center gap-3 sm:mb-2 sm:flex-col">
+            <Skeleton className="size-12 rounded-full" />
+            <Skeleton className="size-12 rounded-full" />
+            <Skeleton className="size-12 rounded-full" />
+          </div>
         </div>
       </CardContent>
     </Card>

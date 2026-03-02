@@ -16,6 +16,16 @@ type FollowButtonProps = {
   initialFollowing: boolean
   initialFollowerCount: number
   className?: string
+  showCount?: boolean
+}
+
+const compactNumberFormatter = new Intl.NumberFormat("en", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+})
+
+function formatCount(value: number) {
+  return compactNumberFormatter.format(value)
 }
 
 export function FollowButton({
@@ -25,6 +35,7 @@ export function FollowButton({
   initialFollowing,
   initialFollowerCount,
   className,
+  showCount = true,
 }: FollowButtonProps) {
   const [following, setFollowing] = useState(initialFollowing)
   const [followerCount, setFollowerCount] = useState(initialFollowerCount)
@@ -82,7 +93,7 @@ export function FollowButton({
     >
       {!following ? <UserPlus className="size-4" /> : null}
       {following ? "Following" : "Follow"}
-      <span className="text-xs text-muted-foreground">{followerCount}</span>
+      {showCount ? <span className="text-xs text-muted-foreground">{formatCount(followerCount)}</span> : null}
     </Button>
   )
 }

@@ -10,6 +10,8 @@ export type FeedVideoItem = {
     username: string | null
     name: string | null
     avatarUrl: string | null
+    followerCount: number
+    viewerFollowing: boolean
   }
   likeCount: number
   commentCount: number

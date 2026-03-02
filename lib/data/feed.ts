@@ -42,6 +42,8 @@ function toFeedVideoItem(video: FeedVideoRecord): FeedVideoItem {
       username: video.user.username,
       name: video.user.name,
       avatarUrl: video.user.avatarUrl,
+      followerCount: video.user._count.followers,
+      viewerFollowing: video.user.followers.length > 0,
     },
     likeCount: video._count.likes,
     commentCount: video._count.comments,
@@ -98,6 +100,20 @@ async function getFeedRows({
           username: true,
           name: true,
           avatarUrl: true,
+          followers: {
+            where: {
+              followerId: viewerId ?? "__anonymous_viewer__",
+            },
+            select: {
+              followerId: true,
+            },
+            take: 1,
+          },
+          _count: {
+            select: {
+              followers: true,
+            },
+          },
         },
       },
       likes: {

@@ -15,6 +15,16 @@ type LikeButtonProps = {
   initialLikeCount: number
   isAuthenticated: boolean
   className?: string
+  layout?: "pill" | "rail"
+}
+
+const compactNumberFormatter = new Intl.NumberFormat("en", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+})
+
+function formatCount(value: number) {
+  return compactNumberFormatter.format(value)
 }
 
 export function LikeButton({
@@ -23,6 +33,7 @@ export function LikeButton({
   initialLikeCount,
   isAuthenticated,
   className,
+  layout = "pill",
 }: LikeButtonProps) {
   const [liked, setLiked] = useState(initialLiked)
   const [likeCount, setLikeCount] = useState(initialLikeCount)
@@ -59,10 +70,32 @@ export function LikeButton({
 
   if (!isAuthenticated) {
     return (
-      <Button asChild type="button" size="sm" variant="ghost" className={cn("h-8 rounded-full px-2.5", className)}>
+      <Button
+        asChild
+        type="button"
+        size="sm"
+        variant="ghost"
+        className={cn(
+          layout === "rail"
+            ? "group h-auto min-w-0 flex-col gap-1 rounded-none p-0 hover:bg-transparent"
+            : "h-8 rounded-full px-2.5",
+          className
+        )}
+      >
         <Link href="/sign-in" aria-label="Sign in to like">
-          <Heart className="size-4" />
-          {likeCount}
+          {layout === "rail" ? (
+            <>
+              <span className="flex size-12 items-center justify-center rounded-full bg-[#f1f1f2] text-foreground transition-transform duration-200 group-hover:scale-105">
+                <Heart className="size-5" />
+              </span>
+              <span className="text-[13px] font-semibold text-foreground">{formatCount(likeCount)}</span>
+            </>
+          ) : (
+            <>
+              <Heart className="size-4" />
+              {formatCount(likeCount)}
+            </>
+          )}
         </Link>
       </Button>
     )
@@ -75,16 +108,34 @@ export function LikeButton({
       variant={liked ? "secondary" : "ghost"}
       disabled={isPending}
       className={cn(
-        "h-8 rounded-full px-2.5 transition-all duration-200 hover:-translate-y-0.5",
-        liked && "text-rose-600",
+        layout === "rail"
+          ? "group h-auto min-w-0 flex-col gap-1 rounded-none p-0 hover:bg-transparent"
+          : "h-8 rounded-full px-2.5 transition-all duration-200 hover:-translate-y-0.5",
+        liked && layout !== "rail" && "text-rose-600",
         className
       )}
       onClick={handleToggle}
       aria-pressed={liked}
       aria-label={liked ? "Unlike video" : "Like video"}
     >
-      <Heart className={cn("size-4", liked && "fill-current")} />
-      {likeCount}
+      {layout === "rail" ? (
+        <>
+          <span
+            className={cn(
+              "flex size-12 items-center justify-center rounded-full bg-[#f1f1f2] text-foreground transition-transform duration-200 group-hover:scale-105",
+              liked && "bg-rose-100 text-rose-600"
+            )}
+          >
+            <Heart className={cn("size-5", liked && "fill-current")} />
+          </span>
+          <span className="text-[13px] font-semibold text-foreground">{formatCount(likeCount)}</span>
+        </>
+      ) : (
+        <>
+          <Heart className={cn("size-4", liked && "fill-current")} />
+          {formatCount(likeCount)}
+        </>
+      )}
     </Button>
   )
 }
