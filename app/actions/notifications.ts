@@ -3,7 +3,12 @@
 import { revalidatePath } from "next/cache"
 
 import { requireUserOrThrow } from "@/lib/auth-guards"
-import { markAllRead, markNotificationRead } from "@/lib/data/notifications"
+import { getUnreadCount, markAllRead, markNotificationRead } from "@/lib/data/notifications"
+import {
+  createNotificationReadEvent,
+  createUnreadCountChangedEvent,
+} from "@/lib/realtime/notifications-events"
+import { emitToUser } from "@/lib/realtime/notifications-hub"
 import { notificationIdSchema } from "@/lib/validations/notifications"
 
 function getErrorMessage(error: unknown) {
@@ -17,6 +22,15 @@ function getErrorMessage(error: unknown) {
 function revalidateNotificationViews() {
   revalidatePath("/inbox")
   revalidatePath("/", "layout")
+}
+
+async function emitUnreadCountChanged(userId: string) {
+  try {
+    const unreadCount = await getUnreadCount(userId)
+    emitToUser(userId, createUnreadCountChangedEvent(unreadCount))
+  } catch (error) {
+    console.error("Unread notification count emit failed.", error)
+  }
 }
 
 export async function markNotificationReadAction(input: unknown) {
@@ -38,6 +52,13 @@ export async function markNotificationReadAction(input: unknown) {
       recipientId: user.id,
     })
 
+    if (changed) {
+      const readAt = new Date().toISOString()
+
+      emitToUser(user.id, createNotificationReadEvent(parsed.data, readAt))
+      await emitUnreadCountChanged(user.id)
+    }
+
     revalidateNotificationViews()
 
     return {
@@ -57,6 +78,10 @@ export async function markAllNotificationsReadAction() {
 
   try {
     const updatedCount = await markAllRead(user.id)
+
+    if (updatedCount > 0) {
+      await emitUnreadCountChanged(user.id)
+    }
 
     revalidateNotificationViews()
 

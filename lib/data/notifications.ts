@@ -6,6 +6,11 @@ import { formatDistanceToNow } from "date-fns"
 import { decodeCursor, normalizeLimit, toCursorPage } from "@/lib/data/pagination"
 import type { InboxNotificationItem, NotificationsPagePayload } from "@/lib/data/notification-types"
 import { prisma } from "@/lib/prisma"
+import {
+  createNotificationCreatedEvent,
+  createUnreadCountChangedEvent,
+} from "@/lib/realtime/notifications-events"
+import { emitToUser } from "@/lib/realtime/notifications-hub"
 import { commentIdSchema, userIdSchema, videoIdSchema } from "@/lib/validations/social"
 import { notificationIdSchema } from "@/lib/validations/notifications"
 
@@ -41,6 +46,15 @@ const notificationSelect = {
 
 type NotificationRecord = Prisma.NotificationGetPayload<{
   select: typeof notificationSelect
+}>
+
+const notificationRealtimeSelect = {
+  ...notificationSelect,
+  recipientId: true,
+} satisfies Prisma.NotificationSelect
+
+type NotificationRealtimeRecord = Prisma.NotificationGetPayload<{
+  select: typeof notificationRealtimeSelect
 }>
 
 function isUniqueConstraintError(error: unknown) {
@@ -99,12 +113,16 @@ function toNotificationItem(notification: NotificationRecord): InboxNotification
 
 async function createNotification(data: Prisma.NotificationUncheckedCreateInput) {
   try {
-    return await prisma.notification.create({
+    const notification = await prisma.notification.create({
       data,
-      select: {
-        id: true,
-      },
+      select: notificationRealtimeSelect,
     })
+
+    void emitCreatedNotificationEvent(notification).catch((error) => {
+      console.error("Notification realtime emit failed.", error)
+    })
+
+    return notification
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       return null
@@ -112,6 +130,13 @@ async function createNotification(data: Prisma.NotificationUncheckedCreateInput)
 
     throw error
   }
+}
+
+async function emitCreatedNotificationEvent(notification: NotificationRealtimeRecord) {
+  const unreadCount = await getUnreadCount(notification.recipientId)
+
+  emitToUser(notification.recipientId, createNotificationCreatedEvent(toNotificationItem(notification)))
+  emitToUser(notification.recipientId, createUnreadCountChangedEvent(unreadCount))
 }
 
 export async function createNotificationLike({

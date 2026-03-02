@@ -6,6 +6,7 @@ import { NotificationsProvider } from "@/components/notifications/notifications-
 import { Toaster } from "@/components/ui/sonner"
 import { getCurrentUser } from "@/lib/auth-guards"
 import { getUnreadCount } from "@/lib/data/notifications"
+import { isPrismaDatabaseConnectivityError } from "@/lib/prisma-errors"
 
 import "./globals.css"
 
@@ -24,32 +25,28 @@ export const metadata: Metadata = {
   description: "Phase 1 authentication and user accounts",
 }
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode
 }>) {
-  const userPromise = getCurrentUser()
+  const user = await getCurrentUser()
+  let initialUnreadCount = 0
 
-  return (
-    <RootLayoutContent userPromise={userPromise}>{children}</RootLayoutContent>
-  )
-}
-
-async function RootLayoutContent({
-  children,
-  userPromise,
-}: Readonly<{
-  children: React.ReactNode
-  userPromise: ReturnType<typeof getCurrentUser>
-}>) {
-  const user = await userPromise
-  const initialUnreadCount = user ? await getUnreadCount(user.id) : 0
+  if (user) {
+    try {
+      initialUnreadCount = await getUnreadCount(user.id)
+    } catch (error) {
+      if (!isPrismaDatabaseConnectivityError(error)) {
+        throw error
+      }
+    }
+  }
 
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <NotificationsProvider initialUnreadCount={initialUnreadCount}>
+        <NotificationsProvider initialUnreadCount={initialUnreadCount} sessionUserId={user?.id ?? null}>
           <div className="min-h-screen bg-muted/30">
             <Navbar user={user} />
             <main className="mx-auto w-full max-w-5xl px-4 py-10">{children}</main>

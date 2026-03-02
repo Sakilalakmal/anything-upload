@@ -25,7 +25,12 @@ export function InboxNavLink({ className }: { className?: string }) {
         <Inbox className="size-4" />
         Inbox
         {badgeCount ? (
-          <span className="absolute -top-1 -right-1 inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold leading-none text-primary-foreground shadow-sm">
+          <span
+            key={unreadCount}
+            className={cn(
+              "absolute -top-1 -right-1 inline-flex min-w-5 animate-in zoom-in-50 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold leading-none text-primary-foreground shadow-sm duration-200"
+            )}
+          >
             {badgeCount}
           </span>
         ) : null}

@@ -9,7 +9,6 @@ import { prisma } from "@/lib/prisma"
 import { profileUpdateSchema } from "@/lib/validations/users"
 
 const userIdentifierSchema = z.string().trim().min(1, "User identifier is required.").max(64)
-const cuidSchema = z.string().cuid()
 
 export class UsernameAlreadyInUseError extends Error {
   constructor(message = "Username is already taken.") {
@@ -46,13 +45,10 @@ export async function fetchUserProfileWithVideos(query: UserProfileVideosQuery) 
   const parsedCursor = decodeCursor(query.cursor)
   const normalizedIdentifier = identifier.toLowerCase()
 
-  const userFromId =
-    cuidSchema.safeParse(identifier).success
-      ? await prisma.user.findUnique({
-          where: { id: identifier },
-          select: userProfileSelect,
-        })
-      : null
+  const userFromId = await prisma.user.findUnique({
+    where: { id: identifier },
+    select: userProfileSelect,
+  })
 
   const user =
     userFromId ??
