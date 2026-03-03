@@ -39,6 +39,7 @@ export async function sendMessage(conversationId: string, content: string) {
   return sendMessageFromUser({
     senderId: user.id,
     conversationId,
+    kind: "TEXT",
     content,
   })
 }

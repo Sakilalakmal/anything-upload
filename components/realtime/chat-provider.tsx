@@ -14,10 +14,11 @@ import {
 import { toast } from "sonner"
 
 import { chatServerEventSchema } from "@/lib/chat/events"
-import type { ChatMessage, InboxConversationItem } from "@/lib/chat/types"
+import type { ChatMessage, InboxConversationItem, PresenceState } from "@/lib/chat/types"
 
 const RECONNECT_BASE_DELAY_MS = 1_000
 const RECONNECT_MAX_DELAY_MS = 30_000
+const PRESENCE_HEARTBEAT_MS = 45_000
 
 type ConnectionState = "idle" | "connecting" | "open" | "reconnecting" | "closed"
 
@@ -25,7 +26,7 @@ type RealtimeMessage = ChatMessage & {
   clientMessageId?: string | null
 }
 
-type ReadReceiptEvent = {
+type SeenReceiptEvent = {
   userId: string
   lastReadAt: string | null
   messageId: string | null
@@ -37,16 +38,20 @@ type ChatContextValue = {
   inboxConversations: Record<string, InboxConversationItem>
   messagesByConversation: Record<string, RealtimeMessage[]>
   typingByConversation: Record<string, Record<string, boolean>>
-  readReceiptsByConversation: Record<string, ReadReceiptEvent>
+  presenceByUser: Record<string, PresenceState>
+  seenReceiptsByConversation: Record<string, SeenReceiptEvent>
   hydrateInbox: (conversations: InboxConversationItem[]) => void
   sendMessage: (input: {
     conversationId?: string
     recipientId?: string
-    content: string
+    kind?: "TEXT" | "VIDEO_SHARE"
+    content?: string | null
+    videoId?: string
     clientMessageId?: string
   }) => boolean
   sendTyping: (conversationId: string, isTyping: boolean) => boolean
   markConversationRead: (input: { conversationId: string; messageId?: string }) => boolean
+  toggleReaction: (input: { messageId: string; emoji: string }) => boolean
 }
 
 const ChatContext = createContext<ChatContextValue | null>(null)
@@ -114,7 +119,8 @@ export function ChatProvider({
   const [inboxConversations, setInboxConversations] = useState<Record<string, InboxConversationItem>>({})
   const [messagesByConversation, setMessagesByConversation] = useState<Record<string, RealtimeMessage[]>>({})
   const [typingByConversation, setTypingByConversation] = useState<Record<string, Record<string, boolean>>>({})
-  const [readReceiptsByConversation, setReadReceiptsByConversation] = useState<Record<string, ReadReceiptEvent>>({})
+  const [presenceByUser, setPresenceByUser] = useState<Record<string, PresenceState>>({})
+  const [seenReceiptsByConversation, setSeenReceiptsByConversation] = useState<Record<string, SeenReceiptEvent>>({})
   const socketRef = useRef<WebSocket | null>(null)
 
   useEffect(() => {
@@ -125,7 +131,8 @@ export function ChatProvider({
     setInboxConversations({})
     setMessagesByConversation({})
     setTypingByConversation({})
-    setReadReceiptsByConversation({})
+    setPresenceByUser({})
+    setSeenReceiptsByConversation({})
   }, [sessionUserId])
 
   const handleServerEvent = useEffectEvent((rawData: string) => {
@@ -146,9 +153,8 @@ export function ChatProvider({
     const event = parsed.data
 
     switch (event.type) {
-      case "message:new":
-        {
-          const data = event.data
+      case "message:new": {
+        const data = event.data
 
         setMessagesByConversation((current) => ({
           ...current,
@@ -169,15 +175,22 @@ export function ChatProvider({
             [data.conversationId]: {
               ...existingConversation,
               lastMessageAt: data.message.createdAt,
-              lastMessage: data.message,
+              lastMessage: {
+                id: data.message.id,
+                conversationId: data.message.conversationId,
+                senderId: data.message.senderId,
+                kind: data.message.kind,
+                content: data.message.content,
+                videoId: data.message.videoId,
+                createdAt: data.message.createdAt,
+              },
             },
           }
         })
         return
-        }
-      case "typing":
-        {
-          const data = event.data
+      }
+      case "typing": {
+        const data = event.data
 
         setTypingByConversation((current) => {
           const currentConversationTyping = current[data.conversationId] ?? {}
@@ -197,12 +210,11 @@ export function ChatProvider({
           }
         })
         return
-        }
-      case "message:read":
-        {
-          const data = event.data
+      }
+      case "message:seen": {
+        const data = event.data
 
-        setReadReceiptsByConversation((current) => ({
+        setSeenReceiptsByConversation((current) => ({
           ...current,
           [data.conversationId]: data,
         }))
@@ -213,35 +225,96 @@ export function ChatProvider({
             return current
           }
 
-          const nextConversation =
-            data.userId === sessionUserId
-              ? {
-                  ...existingConversation,
-                  currentUserLastReadAt: data.lastReadAt,
-                }
-              : {
-                  ...existingConversation,
-                  otherUserLastReadAt: data.lastReadAt,
-                }
-
           return {
             ...current,
-            [data.conversationId]: nextConversation,
+            [data.conversationId]:
+              data.userId === sessionUserId
+                ? {
+                    ...existingConversation,
+                    currentUserLastReadAt: data.lastReadAt,
+                  }
+                : {
+                    ...existingConversation,
+                    otherUserLastReadAt: data.lastReadAt,
+                  },
           }
         })
         return
-        }
-      case "inbox:update":
-        {
-          const data = event.data
+      }
+      case "reaction:update": {
+        const data = event.data
+
+        setMessagesByConversation((current) => {
+          const nextState = { ...current }
+
+          for (const [conversationId, messages] of Object.entries(current)) {
+            const targetIndex = messages.findIndex((message) => message.id === data.messageId)
+
+            if (targetIndex === -1) {
+              continue
+            }
+
+            const nextMessages = [...messages]
+            nextMessages[targetIndex] = {
+              ...nextMessages[targetIndex],
+              reactions: data.reactionsSummary,
+            }
+            nextState[conversationId] = nextMessages
+          }
+
+          return nextState
+        })
+        return
+      }
+      case "presence:update": {
+        const data = event.data
+
+        setPresenceByUser((current) => ({
+          ...current,
+          [data.userId]: data,
+        }))
+        setInboxConversations((current) => {
+          let didChange = false
+          const nextState: Record<string, InboxConversationItem> = {}
+
+          for (const [conversationId, conversation] of Object.entries(current)) {
+            if (conversation.otherUser.id !== data.userId) {
+              nextState[conversationId] = conversation
+              continue
+            }
+
+            didChange = true
+            nextState[conversationId] = {
+              ...conversation,
+              otherUser: {
+                ...conversation.otherUser,
+                lastSeenAt: data.lastSeenAt,
+              },
+            }
+          }
+
+          return didChange ? nextState : current
+        })
+        return
+      }
+      case "inbox:update": {
+        const data = event.data
 
         setInboxConversations((current) => ({
           ...current,
           [data.conversation.id]: mergeInboxConversation(current[data.conversation.id], data.conversation),
         }))
+        setPresenceByUser((current) => ({
+          ...current,
+          [data.conversation.otherUser.id]: current[data.conversation.otherUser.id] ?? {
+            userId: data.conversation.otherUser.id,
+            isOnline: false,
+            lastSeenAt: data.conversation.otherUser.lastSeenAt ?? null,
+          },
+        }))
         setTotalUnreadCount(data.totalUnreadCount)
         return
-        }
+      }
       case "error":
         toast.error(event.data.message)
         return
@@ -255,10 +328,20 @@ export function ChatProvider({
     }
 
     let reconnectTimer: number | null = null
+    let heartbeatTimer: number | null = null
     let reconnectAttempt = 0
     let disposed = false
 
+    const clearHeartbeat = () => {
+      if (heartbeatTimer !== null) {
+        window.clearInterval(heartbeatTimer)
+        heartbeatTimer = null
+      }
+    }
+
     const closeSocket = () => {
+      clearHeartbeat()
+
       if (!socketRef.current) {
         return
       }
@@ -313,6 +396,14 @@ export function ChatProvider({
         socket.onopen = () => {
           reconnectAttempt = 0
           setConnectionState("open")
+          socket.send(JSON.stringify({ type: "presence:heartbeat", data: {} }))
+          heartbeatTimer = window.setInterval(() => {
+            if (socket.readyState !== window.WebSocket.OPEN) {
+              return
+            }
+
+            socket.send(JSON.stringify({ type: "presence:heartbeat", data: {} }))
+          }, PRESENCE_HEARTBEAT_MS)
         }
 
         socket.onmessage = (event) => {
@@ -324,6 +415,8 @@ export function ChatProvider({
         }
 
         socket.onclose = () => {
+          clearHeartbeat()
+
           if (socketRef.current === socket) {
             socketRef.current = null
           }
@@ -349,6 +442,7 @@ export function ChatProvider({
 
     return () => {
       disposed = true
+      clearHeartbeat()
 
       if (reconnectTimer !== null) {
         window.clearTimeout(reconnectTimer)
@@ -368,27 +462,47 @@ export function ChatProvider({
 
       return nextState
     })
+    setPresenceByUser((current) => {
+      const nextState = { ...current }
+
+      for (const conversation of conversations) {
+        if (!nextState[conversation.otherUser.id]) {
+          nextState[conversation.otherUser.id] = {
+            userId: conversation.otherUser.id,
+            isOnline: false,
+            lastSeenAt: conversation.otherUser.lastSeenAt ?? null,
+          }
+        }
+      }
+
+      return nextState
+    })
   }, [])
 
-  const sendMessage = useCallback((input: {
-    conversationId?: string
-    recipientId?: string
-    content: string
-    clientMessageId?: string
-  }) => {
-    if (socketRef.current?.readyState !== window.WebSocket.OPEN) {
-      return false
-    }
+  const sendMessage = useCallback(
+    (input: {
+      conversationId?: string
+      recipientId?: string
+      kind?: "TEXT" | "VIDEO_SHARE"
+      content?: string | null
+      videoId?: string
+      clientMessageId?: string
+    }) => {
+      if (socketRef.current?.readyState !== window.WebSocket.OPEN) {
+        return false
+      }
 
-    socketRef.current.send(
-      JSON.stringify({
-        type: "message:send",
-        data: input,
-      })
-    )
+      socketRef.current.send(
+        JSON.stringify({
+          type: "message:send",
+          data: input,
+        })
+      )
 
-    return true
-  }, [])
+      return true
+    },
+    []
+  )
 
   const sendTyping = useCallback((conversationId: string, isTyping: boolean) => {
     if (socketRef.current?.readyState !== window.WebSocket.OPEN) {
@@ -422,6 +536,21 @@ export function ChatProvider({
     return true
   }, [])
 
+  const toggleReaction = useCallback((input: { messageId: string; emoji: string }) => {
+    if (socketRef.current?.readyState !== window.WebSocket.OPEN) {
+      return false
+    }
+
+    socketRef.current.send(
+      JSON.stringify({
+        type: "reaction:toggle",
+        data: input,
+      })
+    )
+
+    return true
+  }, [])
+
   const value = useMemo(
     () => ({
       connectionState,
@@ -429,11 +558,13 @@ export function ChatProvider({
       inboxConversations,
       messagesByConversation,
       typingByConversation,
-      readReceiptsByConversation,
+      presenceByUser,
+      seenReceiptsByConversation,
       hydrateInbox,
       sendMessage,
       sendTyping,
       markConversationRead,
+      toggleReaction,
     }),
     [
       connectionState,
@@ -441,17 +572,17 @@ export function ChatProvider({
       inboxConversations,
       markConversationRead,
       messagesByConversation,
-      readReceiptsByConversation,
+      presenceByUser,
+      seenReceiptsByConversation,
       sendMessage,
       sendTyping,
+      toggleReaction,
       totalUnreadCount,
       typingByConversation,
     ]
   )
 
-  return (
-    <ChatContext.Provider value={value}>{children}</ChatContext.Provider>
-  )
+  return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>
 }
 
 export function useChat() {

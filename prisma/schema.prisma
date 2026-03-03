@@ -17,6 +17,7 @@ model User {
   avatarUrl              String?
   image                  String?
   emailVerified          Boolean        @default(false)
+  lastSeenAt             DateTime?
   createdAt              DateTime       @default(now())
   updatedAt              DateTime       @updatedAt
   accounts               Account[]
@@ -31,6 +32,7 @@ model User {
   conversationMemberships ConversationMember[]
   sentMessages           Message[]
   messageReads           MessageRead[]
+  messageReactions       MessageReaction[]
 
   @@index([createdAt])
 }
@@ -100,6 +102,11 @@ enum NotificationType {
   FOLLOW
 }
 
+enum MessageKind {
+  TEXT
+  VIDEO_SHARE
+}
+
 model Video {
   id            String          @id @default(cuid())
   userId        String
@@ -117,6 +124,7 @@ model Video {
   comments      Comment[]
   tags          VideoTag[]
   notifications Notification[]
+  sharedMessages Message[]
 
   @@unique([createdAt, id])
   @@index([createdAt])
@@ -212,13 +220,18 @@ model Message {
   id             String       @id @default(cuid())
   conversationId String
   senderId       String
-  content        String       @db.VarChar(1000)
+  kind           MessageKind  @default(TEXT)
+  content        String?      @db.VarChar(1000)
+  videoId        String?
   createdAt      DateTime     @default(now())
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  video          Video?       @relation(fields: [videoId], references: [id], onDelete: SetNull)
+  reactions      MessageReaction[]
 
   @@index([conversationId, createdAt])
   @@index([senderId, createdAt])
+  @@index([videoId])
 }
 
 model MessageRead {
@@ -232,6 +245,19 @@ model MessageRead {
 
   @@unique([conversationId, userId])
   @@index([userId, lastReadAt])
+}
+
+model MessageReaction {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  emoji     String   @db.VarChar(8)
+  createdAt DateTime @default(now())
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
 }
 
 model Tag {

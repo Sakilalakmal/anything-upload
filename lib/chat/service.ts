@@ -1,13 +1,38 @@
-import { Prisma } from "@prisma/client"
+import { MessageKind, Prisma, VideoStatus, VideoVisibility } from "@prisma/client"
 
-import type { ChatConversation, ChatMessage, InboxConversationItem, MessagesPagePayload } from "@/lib/chat/types"
-import { conversationIdSchema, markReadInputSchema, messageIdSchema, sendMessageInputSchema } from "@/lib/chat/validations"
+import type {
+  ChatConversation,
+  ChatMessage,
+  ChatMessagePreview,
+  ChatMessageReactionSummary,
+  ChatVideoSharePreview,
+  InboxConversationItem,
+  MessagesPagePayload,
+} from "@/lib/chat/types"
+import {
+  conversationIdSchema,
+  markReadInputSchema,
+  messageIdSchema,
+  sendMessageInputSchema,
+  toggleReactionInputSchema,
+  videoIdSchema,
+} from "@/lib/chat/validations"
 import { decodeCursor, normalizeLimit, toCursorPage } from "@/lib/data/pagination"
 import { prisma } from "@/lib/prisma"
 import { userIdSchema } from "@/lib/validations/social"
 
 const DEFAULT_MESSAGES_PAGE_SIZE = 30
-const CHAT_TABLE_NAMES = ["Conversation", "ConversationMember", "Message", "MessageRead"] as const
+const DEFAULT_SHAREABLE_VIDEO_LIMIT = 12
+const CHAT_SCHEMA_MARKERS = [
+  "Conversation",
+  "ConversationMember",
+  "Message",
+  "MessageRead",
+  "MessageReaction",
+  "lastSeenAt",
+  "kind",
+  "videoId",
+] as const
 
 const chatUserSelect = {
   id: true,
@@ -15,14 +40,37 @@ const chatUserSelect = {
   username: true,
   avatarUrl: true,
   image: true,
+  lastSeenAt: true,
 } satisfies Prisma.UserSelect
+
+const chatVideoPreviewSelect = {
+  id: true,
+  title: true,
+  thumbnailUrl: true,
+  createdAt: true,
+  user: {
+    select: chatUserSelect,
+  },
+} satisfies Prisma.VideoSelect
 
 const messageSelect = {
   id: true,
   conversationId: true,
   senderId: true,
+  kind: true,
   content: true,
+  videoId: true,
   createdAt: true,
+  reactions: {
+    select: {
+      emoji: true,
+      userId: true,
+    },
+    orderBy: [{ emoji: "asc" }, { createdAt: "asc" }],
+  },
+  video: {
+    select: chatVideoPreviewSelect,
+  },
 } satisfies Prisma.MessageSelect
 
 const conversationSelect = {
@@ -58,6 +106,14 @@ type MessageRecord = Prisma.MessageGetPayload<{
   select: typeof messageSelect
 }>
 
+type ShareableVideoRecord = Prisma.VideoGetPayload<{
+  select: typeof chatVideoPreviewSelect & {
+    userId: true
+    visibility: true
+    status: true
+  }
+}>
+
 type InboxRow = {
   id: string
   lastMessageAt: Date | null
@@ -67,23 +123,16 @@ type InboxRow = {
   otherUserId: string
   otherUserName: string | null
   otherUsername: string | null
-  otherAvatarUrl: string | null
-  otherImage: string | null
+  otherUserAvatarUrl: string | null
+  otherUserImage: string | null
+  otherUserLastSeenAt: Date | null
   lastMessageId: string | null
   lastMessageConversationId: string | null
   lastMessageSenderId: string | null
+  lastMessageKind: MessageKind | null
   lastMessageContent: string | null
+  lastMessageVideoId: string | null
   lastMessageCreatedAt: Date | null
-}
-
-function toChatMessage(message: MessageRecord): ChatMessage {
-  return {
-    id: message.id,
-    conversationId: message.conversationId,
-    senderId: message.senderId,
-    content: message.content,
-    createdAt: message.createdAt.toISOString(),
-  }
 }
 
 function buildDedupeKey(userAId: string, userBId: string) {
@@ -94,12 +143,12 @@ function isUniqueConstraintError(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002"
 }
 
-function hasMissingChatTableMessage(message: string) {
+function hasMissingChatSchemaMessage(message: string) {
   const normalized = message.toLowerCase()
 
   return (
     normalized.includes("does not exist") &&
-    CHAT_TABLE_NAMES.some((tableName) => normalized.includes(tableName.toLowerCase()))
+    CHAT_SCHEMA_MARKERS.some((marker) => normalized.includes(marker.toLowerCase()))
   )
 }
 
@@ -109,7 +158,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isMissingChatTablesError(error: unknown): boolean {
   if (typeof error === "string") {
-    return hasMissingChatTableMessage(error)
+    return hasMissingChatSchemaMessage(error)
   }
 
   if (!isRecord(error)) {
@@ -117,7 +166,7 @@ function isMissingChatTablesError(error: unknown): boolean {
   }
 
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
-    if (error.code === "P2021") {
+    if (error.code === "P2021" || error.code === "P2022") {
       return true
     }
 
@@ -126,19 +175,109 @@ function isMissingChatTablesError(error: unknown): boolean {
       const metaCode = typeof meta?.code === "string" ? meta.code : null
       const metaMessage = typeof meta?.message === "string" ? meta.message : null
 
-      return metaCode === "42P01" || (metaMessage ? hasMissingChatTableMessage(metaMessage) : false)
+      return metaCode === "42P01" || metaCode === "42703" || (metaMessage ? hasMissingChatSchemaMessage(metaMessage) : false)
     }
   }
 
   if (error instanceof Error) {
-    return hasMissingChatTableMessage(error.message) || isMissingChatTablesError(error.cause)
+    return hasMissingChatSchemaMessage(error.message) || isMissingChatTablesError(error.cause)
   }
 
   return Object.values(error).some((value) => isMissingChatTablesError(value))
 }
 
 function createMissingChatTablesError() {
-  return new Error("Chat database tables are missing. Run `npx prisma migrate dev --name phase9_chat`.")
+  return new Error("Chat database schema is missing. Run `npx prisma migrate dev --name chat_premium`.")
+}
+
+function summarizeReactions(
+  reactions: Array<{
+    emoji: string
+    userId: string
+  }>
+): ChatMessageReactionSummary[] {
+  const summaries = new Map<string, Set<string>>()
+
+  for (const reaction of reactions) {
+    const userIds = summaries.get(reaction.emoji) ?? new Set<string>()
+    userIds.add(reaction.userId)
+    summaries.set(reaction.emoji, userIds)
+  }
+
+  return [...summaries.entries()]
+    .map(([emoji, userIds]) => ({
+      emoji,
+      count: userIds.size,
+      userIds: [...userIds].sort(),
+    }))
+    .sort((left, right) => {
+      if (right.count !== left.count) {
+        return right.count - left.count
+      }
+
+      return left.emoji.localeCompare(right.emoji)
+    })
+}
+
+function toChatVideoSharePreview(
+  video: Prisma.VideoGetPayload<{
+    select: typeof chatVideoPreviewSelect
+  }> | null
+): ChatVideoSharePreview | null {
+  if (!video) {
+    return null
+  }
+
+  return {
+    id: video.id,
+    title: video.title,
+    thumbnailUrl: video.thumbnailUrl,
+    createdAt: video.createdAt.toISOString(),
+    creator: {
+      id: video.user.id,
+      name: video.user.name,
+      username: video.user.username,
+      avatarUrl: video.user.avatarUrl,
+      image: video.user.image,
+      lastSeenAt: video.user.lastSeenAt?.toISOString() ?? null,
+    },
+  }
+}
+
+function toChatMessage(message: MessageRecord): ChatMessage {
+  return {
+    id: message.id,
+    conversationId: message.conversationId,
+    senderId: message.senderId,
+    kind: message.kind,
+    content: message.content,
+    videoId: message.videoId,
+    video: toChatVideoSharePreview(message.video),
+    reactions: summarizeReactions(message.reactions),
+    createdAt: message.createdAt.toISOString(),
+  }
+}
+
+function toChatMessagePreview(row: InboxRow): ChatMessagePreview | null {
+  if (
+    !row.lastMessageId ||
+    !row.lastMessageConversationId ||
+    !row.lastMessageSenderId ||
+    !row.lastMessageKind ||
+    !row.lastMessageCreatedAt
+  ) {
+    return null
+  }
+
+  return {
+    id: row.lastMessageId,
+    conversationId: row.lastMessageConversationId,
+    senderId: row.lastMessageSenderId,
+    kind: row.lastMessageKind,
+    content: row.lastMessageContent,
+    videoId: row.lastMessageVideoId,
+    createdAt: row.lastMessageCreatedAt.toISOString(),
+  }
 }
 
 function toChatConversation(conversation: ConversationRecord, viewerId: string): ChatConversation {
@@ -163,6 +302,7 @@ function toChatConversation(conversation: ConversationRecord, viewerId: string):
       username: otherMember.user.username,
       avatarUrl: otherMember.user.avatarUrl,
       image: otherMember.user.image,
+      lastSeenAt: otherMember.user.lastSeenAt?.toISOString() ?? null,
     },
     memberIds: conversation.members.map((member) => member.userId),
     currentUserLastReadAt: currentRead?.lastReadAt.toISOString() ?? null,
@@ -177,25 +317,13 @@ function toInboxConversation(row: InboxRow): InboxConversationItem {
       id: row.otherUserId,
       name: row.otherUserName,
       username: row.otherUsername,
-      avatarUrl: row.otherAvatarUrl,
-      image: row.otherImage,
+      avatarUrl: row.otherUserAvatarUrl,
+      image: row.otherUserImage,
+      lastSeenAt: row.otherUserLastSeenAt?.toISOString() ?? null,
     },
     lastMessageAt: row.lastMessageAt?.toISOString() ?? null,
     unreadCount: row.unreadCount,
-    lastMessage:
-      row.lastMessageId &&
-      row.lastMessageConversationId &&
-      row.lastMessageSenderId &&
-      row.lastMessageContent &&
-      row.lastMessageCreatedAt
-        ? {
-            id: row.lastMessageId,
-            conversationId: row.lastMessageConversationId,
-            senderId: row.lastMessageSenderId,
-            content: row.lastMessageContent,
-            createdAt: row.lastMessageCreatedAt.toISOString(),
-          }
-        : null,
+    lastMessage: toChatMessagePreview(row),
     currentUserLastReadAt: row.currentUserLastReadAt?.toISOString() ?? null,
     otherUserLastReadAt: row.otherUserLastReadAt?.toISOString() ?? null,
   }
@@ -227,6 +355,36 @@ async function assertConversationMember(conversationId: string, userId: string) 
   }
 }
 
+async function findShareableVideoForUser(videoId: string, userId: string) {
+  const parsedVideoId = videoIdSchema.parse(videoId)
+  const parsedUserId = userIdSchema.parse(userId)
+
+  const video = await prisma.video.findUnique({
+    where: {
+      id: parsedVideoId,
+    },
+    select: {
+      ...chatVideoPreviewSelect,
+      userId: true,
+      visibility: true,
+      status: true,
+    },
+  })
+
+  if (!video) {
+    throw new Error("Video not found.")
+  }
+
+  const isOwner = video.userId === parsedUserId
+  const isPublicReady = video.visibility === VideoVisibility.PUBLIC && video.status === VideoStatus.READY
+
+  if (!isOwner && !isPublicReady) {
+    throw new Error("This video cannot be shared in chat.")
+  }
+
+  return video as ShareableVideoRecord
+}
+
 async function getInboxRows(userId: string, conversationId?: string) {
   try {
     return await prisma.$queryRaw<InboxRow[]>(Prisma.sql`
@@ -239,12 +397,15 @@ async function getInboxRows(userId: string, conversationId?: string) {
         other_user."id" AS "otherUserId",
         other_user."name" AS "otherUserName",
         other_user."username" AS "otherUsername",
-        other_user."avatarUrl" AS "otherAvatarUrl",
-        other_user."image" AS "otherImage",
+        other_user."avatarUrl" AS "otherUserAvatarUrl",
+        other_user."image" AS "otherUserImage",
+        other_user."lastSeenAt" AS "otherUserLastSeenAt",
         last_message."id" AS "lastMessageId",
         last_message."conversationId" AS "lastMessageConversationId",
         last_message."senderId" AS "lastMessageSenderId",
+        last_message."kind" AS "lastMessageKind",
         last_message."content" AS "lastMessageContent",
+        last_message."videoId" AS "lastMessageVideoId",
         last_message."createdAt" AS "lastMessageCreatedAt"
       FROM "ConversationMember" member
       INNER JOIN "Conversation" c
@@ -265,7 +426,9 @@ async function getInboxRows(userId: string, conversationId?: string) {
           message."id",
           message."conversationId",
           message."senderId",
+          message."kind",
           message."content",
+          message."videoId",
           message."createdAt"
         FROM "Message" message
         WHERE message."conversationId" = c."id"
@@ -288,10 +451,13 @@ async function getInboxRows(userId: string, conversationId?: string) {
         other_user."username",
         other_user."avatarUrl",
         other_user."image",
+        other_user."lastSeenAt",
         last_message."id",
         last_message."conversationId",
         last_message."senderId",
+        last_message."kind",
         last_message."content",
+        last_message."videoId",
         last_message."createdAt"
       ORDER BY c."lastMessageAt" DESC NULLS LAST, c."updatedAt" DESC, c."id" DESC
     `)
@@ -525,7 +691,9 @@ export async function sendMessageFromUser(input: {
   senderId: string
   conversationId?: string
   recipientId?: string
-  content: string
+  kind?: "TEXT" | "VIDEO_SHARE"
+  content?: string | null
+  videoId?: string
 }) {
   const parsed = sendMessageInputSchema.parse(input)
   const parsedSenderId = userIdSchema.parse(input.senderId)
@@ -539,6 +707,10 @@ export async function sendMessageFromUser(input: {
     throw new Error("Conversation not found.")
   }
 
+  if (parsed.kind === "VIDEO_SHARE" && parsed.videoId) {
+    await findShareableVideoForUser(parsed.videoId, parsedSenderId)
+  }
+
   let createdMessage: MessageRecord
 
   try {
@@ -547,7 +719,9 @@ export async function sendMessageFromUser(input: {
         data: {
           conversationId: conversation.id,
           senderId: parsedSenderId,
+          kind: parsed.kind,
           content: parsed.content,
+          videoId: parsed.kind === "VIDEO_SHARE" ? parsed.videoId ?? null : null,
         },
         select: messageSelect,
       })
@@ -712,6 +886,205 @@ export async function markConversationReadForUser(input: {
     conversationId: parsed.conversationId,
     messageId: targetMessage.id,
     lastReadAt: lastReadAt.toISOString(),
+  }
+}
+
+export async function toggleReactionForUser(input: {
+  messageId: string
+  userId: string
+  emoji: string
+}) {
+  const parsed = toggleReactionInputSchema.parse(input)
+  const parsedUserId = userIdSchema.parse(input.userId)
+
+  const message = await prisma.message.findUnique({
+    where: {
+      id: parsed.messageId,
+    },
+    select: {
+      id: true,
+      conversationId: true,
+      conversation: {
+        select: {
+          members: {
+            select: {
+              userId: true,
+            },
+          },
+        },
+      },
+    },
+  })
+
+  if (!message || !message.conversation.members.some((member) => member.userId === parsedUserId)) {
+    throw new Error("Message not found.")
+  }
+
+  try {
+    const summary = await prisma.$transaction(async (tx) => {
+      const existingReaction = await tx.messageReaction.findUnique({
+        where: {
+          messageId_userId_emoji: {
+            messageId: parsed.messageId,
+            userId: parsedUserId,
+            emoji: parsed.emoji,
+          },
+        },
+        select: {
+          id: true,
+        },
+      })
+
+      if (existingReaction) {
+        await tx.messageReaction.delete({
+          where: {
+            id: existingReaction.id,
+          },
+        })
+      } else {
+        await tx.messageReaction.create({
+          data: {
+            messageId: parsed.messageId,
+            userId: parsedUserId,
+            emoji: parsed.emoji,
+          },
+        })
+      }
+
+      const reactions = await tx.messageReaction.findMany({
+        where: {
+          messageId: parsed.messageId,
+        },
+        select: {
+          emoji: true,
+          userId: true,
+        },
+        orderBy: [{ emoji: "asc" }, { createdAt: "asc" }],
+      })
+
+      return summarizeReactions(reactions)
+    })
+
+    return {
+      conversationId: message.conversationId,
+      memberIds: message.conversation.members.map((member) => member.userId),
+      messageId: parsed.messageId,
+      reactionsSummary: summary,
+    }
+  } catch (error) {
+    if (isMissingChatTablesError(error)) {
+      throw createMissingChatTablesError()
+    }
+
+    throw error
+  }
+}
+
+export async function listShareableVideosForUser(input: {
+  userId: string
+  query?: string | null
+  limit?: number
+}) {
+  const parsedUserId = userIdSchema.parse(input.userId)
+  const query = input.query?.trim() ?? ""
+  const take = normalizeLimit(input.limit, DEFAULT_SHAREABLE_VIDEO_LIMIT)
+
+  const where: Prisma.VideoWhereInput = {
+    OR: [
+      {
+        visibility: VideoVisibility.PUBLIC,
+        status: VideoStatus.READY,
+      },
+      {
+        userId: parsedUserId,
+      },
+    ],
+    ...(query
+      ? {
+          title: {
+            contains: query,
+            mode: "insensitive",
+          },
+        }
+      : {}),
+  }
+
+  const videos = await prisma.video.findMany({
+    where,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take,
+    select: {
+      ...chatVideoPreviewSelect,
+      userId: true,
+      visibility: true,
+      status: true,
+    },
+  })
+
+  return videos.map((video) => ({
+    ...toChatVideoSharePreview(video)!,
+    visibility: video.visibility,
+    status: video.status,
+    isOwner: video.userId === parsedUserId,
+  }))
+}
+
+export async function updateUserLastSeen(userId: string, at = new Date()) {
+  const parsedUserId = userIdSchema.parse(userId)
+
+  try {
+    const user = await prisma.user.update({
+      where: {
+        id: parsedUserId,
+      },
+      data: {
+        lastSeenAt: at,
+      },
+      select: {
+        lastSeenAt: true,
+      },
+    })
+
+    return user.lastSeenAt?.toISOString() ?? null
+  } catch (error) {
+    if (isMissingChatTablesError(error)) {
+      throw createMissingChatTablesError()
+    }
+
+    throw error
+  }
+}
+
+export async function getConversationPartnerIds(userId: string) {
+  const parsedUserId = userIdSchema.parse(userId)
+
+  try {
+    const rows = await prisma.conversationMember.findMany({
+      where: {
+        conversation: {
+          members: {
+            some: {
+              userId: parsedUserId,
+            },
+          },
+        },
+        userId: {
+          not: parsedUserId,
+        },
+      },
+      select: {
+        userId: true,
+      },
+      distinct: ["userId"],
+    })
+
+    return rows.map((row) => row.userId)
+  } catch (error) {
+    if (isMissingChatTablesError(error)) {
+      return []
+    }
+
+    throw error
   }
 }
 
