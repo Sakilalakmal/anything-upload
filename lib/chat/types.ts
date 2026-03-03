@@ -4,15 +4,39 @@ export type ChatUserSummary = {
   username: string | null
   avatarUrl: string | null
   image: string | null
+  lastSeenAt?: string | null
+}
+
+export type ChatMessageReactionSummary = {
+  emoji: string
+  count: number
+  userIds: string[]
+}
+
+export type ChatVideoSharePreview = {
+  id: string
+  title: string
+  thumbnailUrl: string | null
+  createdAt: string
+  creator: ChatUserSummary
 }
 
 export type ChatMessage = {
   id: string
   conversationId: string
   senderId: string
-  content: string
+  kind: "TEXT" | "VIDEO_SHARE"
+  content: string | null
+  videoId: string | null
+  video: ChatVideoSharePreview | null
+  reactions: ChatMessageReactionSummary[]
   createdAt: string
 }
+
+export type ChatMessagePreview = Pick<
+  ChatMessage,
+  "id" | "conversationId" | "senderId" | "kind" | "content" | "videoId" | "createdAt"
+>
 
 export type ChatConversation = {
   id: string
@@ -26,12 +50,18 @@ export type ChatConversation = {
   otherUserLastReadAt: string | null
 }
 
+export type PresenceState = {
+  userId: string
+  isOnline: boolean
+  lastSeenAt: string | null
+}
+
 export type InboxConversationItem = {
   id: string
   otherUser: ChatUserSummary
   lastMessageAt: string | null
   unreadCount: number
-  lastMessage: ChatMessage | null
+  lastMessage: ChatMessagePreview | null
   currentUserLastReadAt: string | null
   otherUserLastReadAt: string | null
 }

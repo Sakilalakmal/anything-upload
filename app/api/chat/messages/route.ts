@@ -32,7 +32,9 @@ export async function POST(request: NextRequest) {
       senderId: user.id,
       conversationId: parsed.conversationId,
       recipientId: parsed.recipientId,
+      kind: parsed.kind,
       content: parsed.content,
+      videoId: parsed.videoId,
     })
 
     return NextResponse.json(result)

@@ -31,6 +31,18 @@ function formatUnreadCount(count: number) {
   return count > 99 ? "99+" : String(count)
 }
 
+function getConversationPreview(conversation: InboxConversationItem) {
+  if (!conversation.lastMessage) {
+    return "Start the conversation"
+  }
+
+  if (conversation.lastMessage.kind === "VIDEO_SHARE") {
+    return conversation.lastMessage.content?.trim() ? `Shared a video: ${conversation.lastMessage.content}` : "Shared a video"
+  }
+
+  return conversation.lastMessage.content ?? "Start the conversation"
+}
+
 export function MessagesShell({
   initialConversations,
   children,
@@ -135,7 +147,7 @@ export function MessagesShell({
                         </div>
                       </div>
                       <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">
-                        {conversation.lastMessage?.content ?? "Start the conversation"}
+                        {getConversationPreview(conversation)}
                       </p>
                     </div>
                   </Link>

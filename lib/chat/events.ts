@@ -1,6 +1,15 @@
 import { z } from "zod"
 
-import { conversationIdSchema, markReadInputSchema, messageContentSchema, messageIdSchema, sendMessageInputSchema, typingEventSchema } from "@/lib/chat/validations"
+import {
+  conversationIdSchema,
+  markReadInputSchema,
+  messageIdSchema,
+  messageKindSchema,
+  sendMessageInputSchema,
+  toggleReactionInputSchema,
+  typingEventSchema,
+  videoIdSchema,
+} from "@/lib/chat/validations"
 import { userIdSchema } from "@/lib/validations/social"
 
 const chatUserSchema = z.object({
@@ -9,13 +18,42 @@ const chatUserSchema = z.object({
   username: z.string().nullable(),
   avatarUrl: z.string().nullable(),
   image: z.string().nullable(),
+  lastSeenAt: z.string().nullable().optional(),
+})
+
+const chatReactionSummarySchema = z.object({
+  emoji: z.string().max(8),
+  count: z.number().int().nonnegative(),
+  userIds: z.array(userIdSchema),
+})
+
+const chatVideoPreviewSchema = z.object({
+  id: videoIdSchema,
+  title: z.string(),
+  thumbnailUrl: z.string().nullable(),
+  createdAt: z.string(),
+  creator: chatUserSchema,
 })
 
 const chatMessageSchema = z.object({
   id: messageIdSchema,
   conversationId: conversationIdSchema,
   senderId: userIdSchema,
-  content: messageContentSchema,
+  kind: messageKindSchema,
+  content: z.string().nullable(),
+  videoId: videoIdSchema.nullable(),
+  video: chatVideoPreviewSchema.nullable(),
+  reactions: z.array(chatReactionSummarySchema),
+  createdAt: z.string(),
+})
+
+const chatMessagePreviewSchema = z.object({
+  id: messageIdSchema,
+  conversationId: conversationIdSchema,
+  senderId: userIdSchema,
+  kind: messageKindSchema,
+  content: z.string().nullable(),
+  videoId: videoIdSchema.nullable(),
   createdAt: z.string(),
 })
 
@@ -24,7 +62,7 @@ const inboxConversationSchema = z.object({
   otherUser: chatUserSchema,
   lastMessageAt: z.string().nullable(),
   unreadCount: z.number().int().nonnegative(),
-  lastMessage: chatMessageSchema.nullable(),
+  lastMessage: chatMessagePreviewSchema.nullable(),
   currentUserLastReadAt: z.string().nullable(),
   otherUserLastReadAt: z.string().nullable(),
 })
@@ -46,6 +84,14 @@ export const chatClientEventSchema = z.discriminatedUnion("type", [
     type: z.literal("message:read"),
     data: markReadInputSchema,
   }),
+  z.object({
+    type: z.literal("reaction:toggle"),
+    data: toggleReactionInputSchema,
+  }),
+  z.object({
+    type: z.literal("presence:heartbeat"),
+    data: z.object({}).optional().default({}),
+  }),
 ])
 
 export const chatServerEventSchema = z.discriminatedUnion("type", [
@@ -66,12 +112,27 @@ export const chatServerEventSchema = z.discriminatedUnion("type", [
     }),
   }),
   z.object({
-    type: z.literal("message:read"),
+    type: z.literal("message:seen"),
     data: z.object({
       conversationId: conversationIdSchema,
       userId: userIdSchema,
       messageId: messageIdSchema.nullable(),
       lastReadAt: z.string().nullable(),
+    }),
+  }),
+  z.object({
+    type: z.literal("reaction:update"),
+    data: z.object({
+      messageId: messageIdSchema,
+      reactionsSummary: z.array(chatReactionSummarySchema),
+    }),
+  }),
+  z.object({
+    type: z.literal("presence:update"),
+    data: z.object({
+      userId: userIdSchema,
+      isOnline: z.boolean(),
+      lastSeenAt: z.string().nullable(),
     }),
   }),
   z.object({

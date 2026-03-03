@@ -3,32 +3,43 @@ import { createServer } from "node:http"
 import type { IncomingMessage } from "node:http"
 import type { Socket } from "node:net"
 import type { Duplex } from "node:stream"
-import { WebSocketServer, WebSocket, type RawData } from "ws"
+import { WebSocket, WebSocketServer, type RawData } from "ws"
 
 import type { ChatServerEvent } from "../lib/chat/events"
 import { chatClientEventSchema } from "../lib/chat/events"
 import {
   getConversation,
+  getConversationPartnerIds,
   getInboxConversation,
   getUnreadMessageCount,
   markConversationReadForUser,
   sendMessageFromUser,
+  toggleReactionForUser,
+  updateUserLastSeen,
 } from "../lib/chat/service"
 import { verifyChatToken } from "../lib/chat/token"
-import { markReadInputSchema, sendMessageInputSchema } from "../lib/chat/validations"
+import { markReadInputSchema, sendMessageInputSchema, toggleReactionInputSchema } from "../lib/chat/validations"
 import { prisma } from "../lib/prisma"
 
 const PORT = Number.parseInt(process.env.CHAT_WS_PORT ?? "3001", 10) || 3001
 const MAX_MESSAGES_PER_WINDOW = 5
-const RATE_LIMIT_WINDOW_MS = 2_000
+const MESSAGE_RATE_LIMIT_WINDOW_MS = 2_000
+const MAX_REACTIONS_PER_WINDOW = 12
+const REACTION_RATE_LIMIT_WINDOW_MS = 3_000
+const READ_THROTTLE_MS = 400
+const PRESENCE_WRITE_THROTTLE_MS = 45_000
 
 type AuthedSocket = WebSocket & {
   userId: string
   activeTypingConversationIds: Set<string>
+  cleanupStarted?: boolean
 }
 
 const socketsByUser = new Map<string, Set<AuthedSocket>>()
 const sendWindowsByUser = new Map<string, number[]>()
+const reactionWindowsByUser = new Map<string, number[]>()
+const lastReadEventByConversationUser = new Map<string, number>()
+const lastPresenceWriteByUser = new Map<string, number>()
 const wss = new WebSocketServer({ noServer: true })
 
 function sendEvent(socket: WebSocket, event: ChatServerEvent) {
@@ -49,6 +60,10 @@ function sendError(socket: WebSocket, code: string, message: string) {
   })
 }
 
+function isUserOnline(userId: string) {
+  return Boolean(socketsByUser.get(userId)?.size)
+}
+
 function registerSocket(socket: AuthedSocket) {
   const existingSockets = socketsByUser.get(socket.userId) ?? new Set<AuthedSocket>()
   existingSockets.add(socket)
@@ -60,6 +75,7 @@ function unregisterSocket(socket: AuthedSocket) {
 
   if (!userSockets) {
     sendWindowsByUser.delete(socket.userId)
+    reactionWindowsByUser.delete(socket.userId)
     return
   }
 
@@ -68,6 +84,7 @@ function unregisterSocket(socket: AuthedSocket) {
   if (userSockets.size === 0) {
     socketsByUser.delete(socket.userId)
     sendWindowsByUser.delete(socket.userId)
+    reactionWindowsByUser.delete(socket.userId)
   }
 }
 
@@ -96,19 +113,32 @@ function broadcastToUsers(userIds: string[], event: ChatServerEvent, skipUserId?
   }
 }
 
-function consumeRateLimit(userId: string) {
+function consumeRateLimit(windowStore: Map<string, number[]>, key: string, maxCount: number, windowMs: number) {
   const now = Date.now()
-  const existingWindow = sendWindowsByUser.get(userId) ?? []
-  const nextWindow = existingWindow.filter((timestamp) => now - timestamp < RATE_LIMIT_WINDOW_MS)
+  const existingWindow = windowStore.get(key) ?? []
+  const nextWindow = existingWindow.filter((timestamp) => now - timestamp < windowMs)
 
-  if (nextWindow.length >= MAX_MESSAGES_PER_WINDOW) {
-    sendWindowsByUser.set(userId, nextWindow)
+  if (nextWindow.length >= maxCount) {
+    windowStore.set(key, nextWindow)
     return false
   }
 
   nextWindow.push(now)
-  sendWindowsByUser.set(userId, nextWindow)
+  windowStore.set(key, nextWindow)
   return true
+}
+
+function shouldThrottleRead(userId: string, conversationId: string) {
+  const key = `${userId}:${conversationId}`
+  const now = Date.now()
+  const lastSeen = lastReadEventByConversationUser.get(key) ?? 0
+
+  if (now - lastSeen < READ_THROTTLE_MS) {
+    return true
+  }
+
+  lastReadEventByConversationUser.set(key, now)
+  return false
 }
 
 async function emitInboxUpdate(userId: string, conversationId: string) {
@@ -130,8 +160,69 @@ async function emitInboxUpdate(userId: string, conversationId: string) {
   })
 }
 
+async function broadcastPresenceUpdate(userId: string, isOnline: boolean, lastSeenAt: string | null) {
+  const audienceUserIds = await getConversationPartnerIds(userId)
+
+  if (!audienceUserIds.length) {
+    return
+  }
+
+  broadcastToUsers(audienceUserIds, {
+    type: "presence:update",
+    data: {
+      userId,
+      isOnline,
+      lastSeenAt,
+    },
+  })
+}
+
+async function syncPresenceToSocket(socket: AuthedSocket) {
+  const audienceUserIds = await getConversationPartnerIds(socket.userId)
+
+  if (!audienceUserIds.length) {
+    return
+  }
+
+  const users = await prisma.user.findMany({
+    where: {
+      id: {
+        in: audienceUserIds,
+      },
+    },
+    select: {
+      id: true,
+      lastSeenAt: true,
+    },
+  })
+
+  for (const user of users) {
+    sendEvent(socket, {
+      type: "presence:update",
+      data: {
+        userId: user.id,
+        isOnline: isUserOnline(user.id),
+        lastSeenAt: user.lastSeenAt?.toISOString() ?? null,
+      },
+    })
+  }
+}
+
+async function touchPresence(userId: string, force = false) {
+  const now = Date.now()
+  const lastWriteAt = lastPresenceWriteByUser.get(userId) ?? 0
+
+  if (!force && now - lastWriteAt < PRESENCE_WRITE_THROTTLE_MS) {
+    return null
+  }
+
+  const lastSeenAt = await updateUserLastSeen(userId, new Date(now))
+  lastPresenceWriteByUser.set(userId, now)
+  return lastSeenAt
+}
+
 async function handleMessageSend(socket: AuthedSocket, rawData: unknown) {
-  if (!consumeRateLimit(socket.userId)) {
+  if (!consumeRateLimit(sendWindowsByUser, socket.userId, MAX_MESSAGES_PER_WINDOW, MESSAGE_RATE_LIMIT_WINDOW_MS)) {
     sendError(socket, "rate_limited", "Too many messages. Try again in a moment.")
     return
   }
@@ -149,7 +240,9 @@ async function handleMessageSend(socket: AuthedSocket, rawData: unknown) {
     senderId: socket.userId,
     conversationId: data.conversationId,
     recipientId: data.recipientId,
+    kind: data.kind,
     content: data.content,
+    videoId: data.videoId,
   })
 
   socket.activeTypingConversationIds.delete(result.conversation.id)
@@ -216,6 +309,11 @@ async function handleRead(socket: AuthedSocket, rawData: unknown) {
   }
 
   const data = parsed.data
+
+  if (shouldThrottleRead(socket.userId, data.conversationId)) {
+    return
+  }
+
   const conversation = await getConversation(data.conversationId, socket.userId)
 
   if (!conversation) {
@@ -230,7 +328,7 @@ async function handleRead(socket: AuthedSocket, rawData: unknown) {
   })
 
   broadcastToUsers(conversation.memberIds, {
-    type: "message:read",
+    type: "message:seen",
     data: {
       conversationId: result.conversationId,
       userId: socket.userId,
@@ -239,7 +337,35 @@ async function handleRead(socket: AuthedSocket, rawData: unknown) {
     },
   })
 
-  await emitInboxUpdate(socket.userId, result.conversationId)
+  await Promise.all(conversation.memberIds.map((userId) => emitInboxUpdate(userId, result.conversationId)))
+}
+
+async function handleReactionToggle(socket: AuthedSocket, rawData: unknown) {
+  if (!consumeRateLimit(reactionWindowsByUser, socket.userId, MAX_REACTIONS_PER_WINDOW, REACTION_RATE_LIMIT_WINDOW_MS)) {
+    sendError(socket, "rate_limited", "Too many reactions. Try again in a moment.")
+    return
+  }
+
+  const parsed = toggleReactionInputSchema.safeParse(rawData)
+
+  if (!parsed.success) {
+    sendError(socket, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid reaction payload.")
+    return
+  }
+
+  const result = await toggleReactionForUser({
+    userId: socket.userId,
+    messageId: parsed.data.messageId,
+    emoji: parsed.data.emoji,
+  })
+
+  broadcastToUsers(result.memberIds, {
+    type: "reaction:update",
+    data: {
+      messageId: result.messageId,
+      reactionsSummary: result.reactionsSummary,
+    },
+  })
 }
 
 async function clearTypingState(socket: AuthedSocket) {
@@ -307,6 +433,12 @@ async function handleSocketMessage(socket: AuthedSocket, rawBuffer: RawData) {
       case "message:read":
         await handleRead(socket, event.data)
         return
+      case "reaction:toggle":
+        await handleReactionToggle(socket, event.data)
+        return
+      case "presence:heartbeat":
+        await touchPresence(socket.userId)
+        return
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Websocket request failed."
@@ -330,9 +462,40 @@ async function authenticateUpgrade(request: IncomingMessage) {
   return verifyChatToken(token)
 }
 
+async function handleSocketDisconnected(socket: AuthedSocket) {
+  if (socket.cleanupStarted) {
+    return
+  }
+
+  socket.cleanupStarted = true
+  await clearTypingState(socket)
+
+  if (isUserOnline(socket.userId)) {
+    return
+  }
+
+  const lastSeenAt = await touchPresence(socket.userId, true)
+  await broadcastPresenceUpdate(socket.userId, false, lastSeenAt)
+}
+
 wss.on("connection", (socket) => {
   const authedSocket = socket as AuthedSocket
+  const wasOnline = isUserOnline(authedSocket.userId)
+
   registerSocket(authedSocket)
+
+  void (async () => {
+    try {
+      await syncPresenceToSocket(authedSocket)
+
+      if (!wasOnline) {
+        const lastSeenAt = await touchPresence(authedSocket.userId, true)
+        await broadcastPresenceUpdate(authedSocket.userId, true, lastSeenAt)
+      }
+    } catch (error) {
+      console.error("Presence sync failed.", error)
+    }
+  })()
 
   socket.on("message", (buffer) => {
     void handleSocketMessage(authedSocket, buffer)
@@ -340,13 +503,13 @@ wss.on("connection", (socket) => {
 
   socket.on("close", () => {
     unregisterSocket(authedSocket)
-    void clearTypingState(authedSocket)
+    void handleSocketDisconnected(authedSocket)
   })
 
   socket.on("error", (error) => {
     console.error("Chat websocket error.", error)
     unregisterSocket(authedSocket)
-    void clearTypingState(authedSocket)
+    void handleSocketDisconnected(authedSocket)
   })
 })
 
