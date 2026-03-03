@@ -28,6 +28,9 @@ model User {
   following              Follow[]       @relation("UserFollowing")
   recipientNotifications Notification[] @relation("RecipientNotifications")
   actorNotifications     Notification[] @relation("ActorNotifications")
+  conversationMemberships ConversationMember[]
+  sentMessages           Message[]
+  messageReads           MessageRead[]
 
   @@index([createdAt])
 }
@@ -177,6 +180,58 @@ model Notification {
   @@index([recipientId, createdAt, id])
   @@index([recipientId, readAt, createdAt, id])
   @@index([actorId, createdAt])
+}
+
+model Conversation {
+  id            String               @id @default(cuid())
+  dedupeKey     String               @unique @db.VarChar(255)
+  lastMessageAt DateTime?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  members       ConversationMember[]
+  messages      Message[]
+  reads         MessageRead[]
+
+  @@index([lastMessageAt, updatedAt])
+}
+
+model ConversationMember {
+  id             String       @id @default(cuid())
+  conversationId String
+  userId         String
+  role           String?      @db.VarChar(32)
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId, conversationId])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  senderId       String
+  content        String       @db.VarChar(1000)
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@index([senderId, createdAt])
+}
+
+model MessageRead {
+  id             String       @id @default(cuid())
+  conversationId String
+  userId         String
+  lastReadAt     DateTime
+  updatedAt      DateTime     @updatedAt
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId, lastReadAt])
 }
 
 model Tag {
