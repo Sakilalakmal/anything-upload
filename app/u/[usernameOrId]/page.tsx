@@ -1,6 +1,6 @@
 import Link from "next/link"
 import { notFound } from "next/navigation"
-import { Clapperboard, UserRound } from "lucide-react"
+import { Clapperboard, MessageCircleMore, UserRound } from "lucide-react"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -58,13 +58,21 @@ export default async function PublicProfilePage({ params }: PublicProfilePagePro
                 <Link href="/profile">Edit profile</Link>
               </Button>
             ) : (
-              <FollowButton
-                targetUserId={profile.user.id}
-                profilePath={`/u/${profile.user.username ?? profile.user.id}`}
-                initialFollowing={profile.viewer.isFollowing}
-                initialFollowerCount={profile.stats.followers}
-                isAuthenticated={Boolean(viewer)}
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button asChild variant="outline" className="transition-transform hover:-translate-y-0.5">
+                  <Link href={viewer ? `/messages?user=${profile.user.id}` : "/sign-in"}>
+                    <MessageCircleMore className="size-4" />
+                    Message
+                  </Link>
+                </Button>
+                <FollowButton
+                  targetUserId={profile.user.id}
+                  profilePath={`/u/${profile.user.username ?? profile.user.id}`}
+                  initialFollowing={profile.viewer.isFollowing}
+                  initialFollowerCount={profile.stats.followers}
+                  isAuthenticated={Boolean(viewer)}
+                />
+              </div>
             )}
           </div>
         </div>

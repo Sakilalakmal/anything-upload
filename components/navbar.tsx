@@ -2,6 +2,7 @@ import Link from "next/link"
 import { Compass, Plus, Search } from "lucide-react"
 
 import { signOutAction } from "@/app/actions/auth"
+import { MessagesNavLink } from "@/components/messages/messages-nav-link"
 import { InboxNavLink } from "@/components/notifications/inbox-nav-link"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -47,6 +48,7 @@ export function Navbar({ user }: { user: AuthUser | null }) {
                   Upload
                 </Link>
               </Button>
+              <MessagesNavLink className="rounded-xl px-3" />
               <InboxNavLink className="rounded-xl px-3" />
               <Button asChild variant="ghost" className="size-11 rounded-full p-0">
                 <Link href="/profile" prefetch={false} aria-label="Profile">
